@@ -1,5 +1,4 @@
 import os
-import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -7,1150 +6,1371 @@ import matplotlib.pyplot as plt
 
 from statsmodels.tsa.arima.model import ARIMA
 
-
 # ============================================================
+
 # PAGE CONFIG
+
 # ============================================================
 
 st.set_page_config(
-    page_title="Reliance Stock Price Forecast",
-    page_icon="📈",
-    layout="wide"
+page_title="Reliance Stock Price Forecast",
+page_icon="📈",
+layout="wide"
 )
 
 st.title("📈 Reliance Industries Stock Price Forecasting")
-st.caption("Machine Learning + ARIMA | Future Forecast + Historical Backtesting")
-
+st.caption(
+"ARIMA Time Series Forecasting | Historical Backtesting | Future Forecast"
+)
 
 # ============================================================
-# FILES
+
+# FILE
+
 # ============================================================
 
-MODEL_FILE = "reliance_linear_regression.pkl"
-SCALER_FILE = "reliance_scaler.pkl"
-FEATURE_FILE = "reliance_features.pkl"
 DATA_FILE = "Company stock prices (1).xlsx"
 
-
-# ============================================================
-# TECHNICAL FEATURES
 # ============================================================
 
-def build_technical_features(data):
-
-    df = data.copy()
-
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-
-    numeric_cols = [
-        "Open",
-        "High",
-        "Low",
-        "Close",
-        "Adj Close",
-        "Volume"
-    ]
-
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df.dropna(subset=["Date", "Close"])
-    df = df.sort_values("Date")
-    df = df.drop_duplicates("Date")
-    df = df.reset_index(drop=True)
-
-    # -------------------------------
-    # LAG FEATURES
-    # -------------------------------
-
-    df["Close_Lag1"] = df["Close"].shift(1)
-    df["Close_Lag2"] = df["Close"].shift(2)
-    df["Close_Lag3"] = df["Close"].shift(3)
-    df["Close_Lag5"] = df["Close"].shift(5)
-
-    # -------------------------------
-    # MOVING AVERAGES
-    # -------------------------------
-
-    df["MA_5"] = df["Close"].rolling(5).mean()
-    df["MA_10"] = df["Close"].rolling(10).mean()
-    df["MA_20"] = df["Close"].rolling(20).mean()
-    df["MA_50"] = df["Close"].rolling(50).mean()
-
-    # -------------------------------
-    # EMA
-    # -------------------------------
-
-    df["EMA_20"] = df["Close"].ewm(span=20, adjust=False).mean()
-
-    # -------------------------------
-    # RETURNS
-    # -------------------------------
-
-    df["Daily_Return"] = df["Close"].pct_change()
-
-    # -------------------------------
-    # VOLATILITY
-    # -------------------------------
-
-    df["Volatility_10"] = df["Daily_Return"].rolling(10).std()
-    df["Volatility_20"] = df["Daily_Return"].rolling(20).std()
-
-    # -------------------------------
-    # RSI
-    # -------------------------------
-
-    delta = df["Close"].diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-
-    df["RSI_14"] = 100 - (100 / (1 + rs))
-
-    # -------------------------------
-    # MACD
-    # -------------------------------
-
-    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-
-    df["MACD"] = ema12 - ema26
-    df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
-
-    # -------------------------------
-    # BOLLINGER BANDS
-    # -------------------------------
-
-    df["BB_Mid"] = df["Close"].rolling(20).mean()
-    df["BB_Std"] = df["Close"].rolling(20).std()
-
-    df["BB_Upper"] = df["BB_Mid"] + 2 * df["BB_Std"]
-    df["BB_Lower"] = df["BB_Mid"] - 2 * df["BB_Std"]
-
-    # -------------------------------
-    # PRICE RANGE
-    # -------------------------------
-
-    df["High_Low_Range"] = df["High"] - df["Low"]
-    df["Open_Close_Range"] = df["Open"] - df["Close"]
-
-    # -------------------------------
-    # VOLUME
-    # -------------------------------
-
-    df["Volume_MA_10"] = df["Volume"].rolling(10).mean()
-    df["Volume_Change"] = df["Volume"].pct_change()
-
-    # -------------------------------
-    # DATE FEATURES
-    # -------------------------------
-
-    df["Day_of_Week"] = df["Date"].dt.dayofweek
-    df["Month"] = df["Date"].dt.month
-    df["Quarter"] = df["Date"].dt.quarter
-
-    # -------------------------------
-    # EXTRA FEATURES
-    # -------------------------------
-
-    df["Daily_Range_Pct"] = (
-        (df["High"] - df["Low"]) / df["Close"]
-    )
-
-    df["Open_Close_Return"] = (
-        (df["Close"] - df["Open"]) / df["Open"]
-    )
-
-    df["Volume_Ratio"] = (
-        df["Volume"] / df["Volume_MA_10"]
-    )
-
-    return df
-
-
-# ============================================================
-# LOAD MODEL
-# ============================================================
-
-@st.cache_resource
-def load_artifacts():
-
-    model = joblib.load(MODEL_FILE)
-    scaler = joblib.load(SCALER_FILE)
-    features = joblib.load(FEATURE_FILE)
-
-    return model, scaler, features
-
-
-# ============================================================
 # LOAD DATA
+
 # ============================================================
 
 @st.cache_data
 def load_data(uploaded_file=None):
 
-    if uploaded_file is not None:
+```
+if uploaded_file is not None:
 
-        df = pd.read_excel(
-            uploaded_file,
-            sheet_name="in"
-        )
+    df = pd.read_excel(
+        uploaded_file,
+        sheet_name="in"
+    )
 
-    else:
+else:
 
-        df = pd.read_excel(
-            DATA_FILE,
-            sheet_name="in"
-        )
+    df = pd.read_excel(
+        DATA_FILE,
+        sheet_name="in"
+    )
 
-    required_columns = [
-        "Date",
-        "Open",
-        "High",
-        "Low",
-        "Close",
-        "Adj Close",
-        "Volume"
-    ]
+required_columns = [
+    "Date",
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Adj Close",
+    "Volume"
+]
 
-    missing = [
-        col for col in required_columns
-        if col not in df.columns
-    ]
+missing = [
+    col
+    for col in required_columns
+    if col not in df.columns
+]
 
-    if missing:
-        raise ValueError(
-            f"Missing columns: {missing}"
-        )
+if missing:
 
-    df["Date"] = pd.to_datetime(
-        df["Date"],
+    raise ValueError(
+        f"Missing columns: {missing}"
+    )
+
+# --------------------------------------------------------
+# DATE
+# --------------------------------------------------------
+
+df["Date"] = pd.to_datetime(
+    df["Date"],
+    errors="coerce"
+)
+
+# --------------------------------------------------------
+# NUMERIC COLUMNS
+# --------------------------------------------------------
+
+numeric_columns = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Adj Close",
+    "Volume"
+]
+
+for col in numeric_columns:
+
+    df[col] = pd.to_numeric(
+        df[col],
         errors="coerce"
     )
 
-    for col in required_columns[1:]:
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce"
-        )
+# --------------------------------------------------------
+# CLEAN
+# --------------------------------------------------------
 
-    df = df.dropna(
-        subset=["Date", "Close"]
+df = df.dropna(
+    subset=[
+        "Date",
+        "Close"
+    ]
+)
+
+df = df.sort_values(
+    "Date"
+)
+
+df = df.drop_duplicates(
+    subset=["Date"]
+)
+
+df = df.reset_index(
+    drop=True
+)
+
+if len(df) < 60:
+
+    raise ValueError(
+        "At least 60 historical rows are required."
     )
 
-    df = df.sort_values("Date")
-    df = df.drop_duplicates("Date")
-    df = df.reset_index(drop=True)
-
-    if len(df) < 60:
-        raise ValueError(
-            "At least 60 historical rows are required."
-        )
-
-    return df
-
+return df
+```
 
 # ============================================================
-# MODEL PREDICTION
-# ============================================================
 
-def predict_close(
-    feature_df,
-    model,
-    scaler,
-    features
-):
-
-    X = feature_df[features].copy()
-
-    if X.isnull().any().any():
-
-        missing_cols = X.columns[
-            X.isnull().any()
-        ].tolist()
-
-        raise ValueError(
-            "NaN values found in model features: "
-            + str(missing_cols)
-        )
-
-    X_scaled = scaler.transform(X)
-
-    prediction = model.predict(X_scaled)
-
-    return float(prediction[0])
-
+# PREPARE TIME SERIES
 
 # ============================================================
-# RECURSIVE FORECAST
-# ============================================================
 
-def recursive_forecast(
-    history,
-    model,
-    scaler,
-    features,
-    n_days
-):
+def prepare_close_series(history):
 
-    working = history.copy()
+```
+df = history.copy()
 
-    working["Date"] = pd.to_datetime(
-        working["Date"]
-    )
+df["Date"] = pd.to_datetime(
+    df["Date"],
+    errors="coerce"
+)
 
-    working = working.sort_values("Date")
-    working = working.reset_index(drop=True)
+df["Close"] = pd.to_numeric(
+    df["Close"],
+    errors="coerce"
+)
 
-    future_dates = pd.bdate_range(
-        start=working["Date"].max() + pd.Timedelta(days=1),
-        periods=n_days
-    )
+df = df.dropna(
+    subset=[
+        "Date",
+        "Close"
+    ]
+)
 
-    predictions = []
+df = df.sort_values(
+    "Date"
+)
 
-    for future_date in future_dates:
+df = df.drop_duplicates(
+    subset=["Date"]
+)
 
-        previous_close = float(
-            working["Close"].iloc[-1]
-        )
+# IMPORTANT:
+# Set Date as DatetimeIndex.
+# This fixes:
+# ValueError: No supported index is available.
 
-        # Use recent average volume
-        recent_volume = working["Volume"].tail(10)
+df = df.set_index(
+    "Date"
+)
 
-        if recent_volume.notna().any():
+close_series = df["Close"].astype(float)
 
-            future_volume = float(
-                recent_volume.mean()
-            )
-
-        else:
-
-            future_volume = float(
-                working["Volume"].iloc[-1]
-            )
-
-        # Create temporary future row
-        new_row = {
-            "Date": future_date,
-            "Open": previous_close,
-            "High": previous_close,
-            "Low": previous_close,
-            "Close": previous_close,
-            "Adj Close": previous_close,
-            "Volume": future_volume
-        }
-
-        temp = pd.concat(
-            [
-                working,
-                pd.DataFrame([new_row])
-            ],
-            ignore_index=True
-        )
-
-        # Recalculate features
-        temp_features = build_technical_features(temp)
-
-        # Last row
-        last_features = temp_features.tail(1)
-
-        # Predict
-        prediction = predict_close(
-            last_features,
-            model,
-            scaler,
-            features
-        )
-
-        # Prevent negative stock prices
-        prediction = max(
-            prediction,
-            0.01
-        )
-
-        # Update future OHLC
-        temp.loc[
-            temp.index[-1],
-            "Close"
-        ] = prediction
-
-        temp.loc[
-            temp.index[-1],
-            "Adj Close"
-        ] = prediction
-
-        temp.loc[
-            temp.index[-1],
-            "High"
-        ] = max(
-            previous_close,
-            prediction
-        )
-
-        temp.loc[
-            temp.index[-1],
-            "Low"
-        ] = min(
-            previous_close,
-            prediction
-        )
-
-        working = temp
-
-        predictions.append(
-            {
-                "Date": future_date,
-                "Predicted_Close_LR": prediction
-            }
-        )
-
-    return pd.DataFrame(predictions)
-
+return close_series
+```
 
 # ============================================================
-# BACKTEST
-# ============================================================
 
-def backtest_model(
-    history,
-    model,
-    scaler,
-    features,
-    test_days
-):
-
-    if len(history) <= test_days + 60:
-
-        raise ValueError(
-            f"Not enough data for {test_days}-day backtest."
-        )
-
-    train_data = history.iloc[:-test_days].copy()
-
-    actual_data = history.iloc[-test_days:].copy()
-
-    # Forecast exactly the same number of days
-    predictions = recursive_forecast(
-        train_data,
-        model,
-        scaler,
-        features,
-        test_days
-    )
-
-    result = actual_data[
-        [
-            "Date",
-            "Close"
-        ]
-    ].copy()
-
-    result = result.rename(
-        columns={
-            "Close": "Actual_Close"
-        }
-    )
-
-    result = result.reset_index(drop=True)
-
-    predictions = predictions.reset_index(drop=True)
-
-    result["Predicted_Close"] = (
-        predictions["Predicted_Close_LR"]
-    )
-
-    # Error
-    result["Error"] = (
-        result["Predicted_Close"]
-        - result["Actual_Close"]
-    )
-
-    result["Absolute_Error"] = (
-        result["Error"].abs()
-    )
-
-    result["Percentage_Error"] = (
-        result["Absolute_Error"]
-        / result["Actual_Close"]
-        * 100
-    )
-
-    mae = result["Absolute_Error"].mean()
-
-    rmse = np.sqrt(
-        np.mean(
-            result["Error"] ** 2
-        )
-    )
-
-    mape = result["Percentage_Error"].mean()
-
-    accuracy = max(
-        0,
-        100 - mape
-    )
-
-    metrics = {
-        "MAE": mae,
-        "RMSE": rmse,
-        "MAPE": mape,
-        "Accuracy": accuracy
-    }
-
-    return result, metrics
-
+# ARIMA MODEL
 
 # ============================================================
-# ARIMA
+
+def fit_arima_model(close_series):
+
+```
+if len(close_series) < 30:
+
+    raise ValueError(
+        "At least 30 observations are required for ARIMA."
+    )
+
+model = ARIMA(
+    close_series,
+    order=(5, 1, 0)
+)
+
+fitted_model = model.fit()
+
+return fitted_model
+```
+
+# ============================================================
+
+# ARIMA FUTURE FORECAST
+
 # ============================================================
 
 def arima_forecast(
-    history,
-    n_days
+history,
+n_days
 ):
 
-    df = history.copy()
+```
+close_series = prepare_close_series(
+    history
+)
 
-    df["Date"] = pd.to_datetime(
-        df["Date"]
-    )
+fitted_model = fit_arima_model(
+    close_series
+)
 
-    df = df.sort_values("Date")
+forecast_result = fitted_model.get_forecast(
+    steps=n_days
+)
 
-    close_series = (
-        df["Close"]
-        .astype(float)
-        .reset_index(drop=True)
-    )
+forecast = forecast_result.predicted_mean
 
-    if len(close_series) < 30:
+confidence = forecast_result.conf_int(
+    alpha=0.05
+)
 
-        raise ValueError(
-            "At least 30 observations are required for ARIMA."
-        )
+# --------------------------------------------------------
+# FUTURE BUSINESS DATES
+# --------------------------------------------------------
 
-    model = ARIMA(
-        close_series,
-        order=(5, 1, 0)
-    )
+future_dates = pd.bdate_range(
+    start=close_series.index[-1]
+    + pd.Timedelta(days=1),
+    periods=n_days
+)
 
-    fitted = model.fit()
+result = pd.DataFrame({
 
-    forecast_result = fitted.get_forecast(
-        steps=n_days
-    )
+    "Date": future_dates,
 
-    forecast = forecast_result.predicted_mean
+    "Predicted_Close_ARIMA":
+        forecast.to_numpy(),
 
-    confidence = forecast_result.conf_int(
-        alpha=0.05
-    )
+    "ARIMA_Lower_95":
+        confidence.iloc[:, 0].to_numpy(),
 
-    future_dates = pd.bdate_range(
-        start=df["Date"].max()
-        + pd.Timedelta(days=1),
-        periods=n_days
-    )
+    "ARIMA_Upper_95":
+        confidence.iloc[:, 1].to_numpy()
 
-    result = pd.DataFrame(
-        {
-            "Date": future_dates,
-            "Predicted_Close_ARIMA": forecast.values,
-            "ARIMA_Lower_95": confidence.iloc[:, 0].values,
-            "ARIMA_Upper_95": confidence.iloc[:, 1].values
-        }
-    )
+})
 
-    return result
-
+return result
+```
 
 # ============================================================
+
+# ARIMA BACKTEST
+
+# ============================================================
+
+def arima_backtest(
+history,
+test_days
+):
+
+```
+if len(history) <= test_days + 30:
+
+    raise ValueError(
+        f"Not enough data for a {test_days}-day backtest."
+    )
+
+# --------------------------------------------------------
+# TRAIN DATA
+# --------------------------------------------------------
+
+train_data = history.iloc[
+    :-test_days
+].copy()
+
+# --------------------------------------------------------
+# ACTUAL TEST DATA
+# --------------------------------------------------------
+
+actual_data = history.iloc[
+    -test_days:
+].copy()
+
+actual_data["Date"] = pd.to_datetime(
+    actual_data["Date"]
+)
+
+actual_data["Close"] = pd.to_numeric(
+    actual_data["Close"],
+    errors="coerce"
+)
+
+actual_data = actual_data.dropna(
+    subset=[
+        "Date",
+        "Close"
+    ]
+)
+
+# --------------------------------------------------------
+# TRAIN ARIMA
+# --------------------------------------------------------
+
+train_series = prepare_close_series(
+    train_data
+)
+
+fitted_model = fit_arima_model(
+    train_series
+)
+
+# --------------------------------------------------------
+# FORECAST
+# --------------------------------------------------------
+
+forecast_result = fitted_model.get_forecast(
+    steps=test_days
+)
+
+predictions = forecast_result.predicted_mean
+
+# --------------------------------------------------------
+# CONFIDENCE INTERVAL
+# --------------------------------------------------------
+
+confidence = forecast_result.conf_int(
+    alpha=0.05
+)
+
+# --------------------------------------------------------
+# RESULT
+# --------------------------------------------------------
+
+result = actual_data[
+    [
+        "Date",
+        "Close"
+    ]
+].copy()
+
+result = result.rename(
+    columns={
+        "Close": "Actual_Close"
+    }
+)
+
+result = result.reset_index(
+    drop=True
+)
+
+result["Predicted_Close"] = (
+    predictions.to_numpy()
+)
+
+result["ARIMA_Lower_95"] = (
+    confidence.iloc[:, 0].to_numpy()
+)
+
+result["ARIMA_Upper_95"] = (
+    confidence.iloc[:, 1].to_numpy()
+)
+
+# --------------------------------------------------------
+# ERROR
+# --------------------------------------------------------
+
+result["Error"] = (
+    result["Predicted_Close"]
+    - result["Actual_Close"]
+)
+
+result["Absolute_Error"] = (
+    result["Error"].abs()
+)
+
+# Avoid division by zero
+result["Percentage_Error"] = np.where(
+    result["Actual_Close"] != 0,
+
+    (
+        result["Absolute_Error"]
+        / result["Actual_Close"]
+        * 100
+    ),
+
+    np.nan
+)
+
+# --------------------------------------------------------
+# METRICS
+# --------------------------------------------------------
+
+mae = (
+    result["Absolute_Error"]
+    .mean()
+)
+
+rmse = np.sqrt(
+    np.mean(
+        result["Error"] ** 2
+    )
+)
+
+mape = (
+    result["Percentage_Error"]
+    .mean()
+)
+
+metrics = {
+
+    "MAE": mae,
+
+    "RMSE": rmse,
+
+    "MAPE": mape
+
+}
+
+return result, metrics
+```
+
+# ============================================================
+
 # SIDEBAR
+
 # ============================================================
 
-st.sidebar.header("⚙️ Forecast Settings")
+st.sidebar.header(
+"⚙️ Forecast Settings"
+)
+
+# ============================================================
+
+# FILE UPLOAD
+
+# ============================================================
 
 uploaded_file = st.sidebar.file_uploader(
-    "Upload Excel file",
-    type=["xlsx"]
+"Upload Excel file",
+type=["xlsx"]
 )
+
+# ============================================================
+
+# FORECAST HORIZON
+
+# ============================================================
 
 horizon = st.sidebar.slider(
-    "Forecast Horizon (days)",
-    min_value=1,
-    max_value=60,
-    value=30
+
+```
+"Forecast Horizon (business days)",
+
+min_value=1,
+
+max_value=60,
+
+value=30
+```
+
 )
 
-show_arima = st.sidebar.checkbox(
-    "Show ARIMA Forecast",
-    value=True
-)
+# ============================================================
 
-st.sidebar.markdown("---")
+# BACKTEST DAYS
+
+# ============================================================
 
 backtest_days = st.sidebar.selectbox(
-    "Historical Backtest",
-    [30, 60]
+
+```
+"Historical Backtest",
+
+[30, 60],
+
+index=0
+```
+
 )
 
+# ============================================================
+
+# BUTTONS
+
+# ============================================================
+
 run_forecast = st.sidebar.button(
-    "🚀 Run Forecast",
-    use_container_width=True
+
+```
+"🚀 Run Forecast",
+
+use_container_width=True
+```
+
 )
 
 run_backtest = st.sidebar.button(
-    "🔍 Run Backtest",
-    use_container_width=True
+
+```
+"🔍 Run Backtest",
+
+use_container_width=True
+```
+
 )
 
-
-# ============================================================
-# CHECK FILES
 # ============================================================
 
-missing_files = []
-
-for file in [
-    MODEL_FILE,
-    SCALER_FILE,
-    FEATURE_FILE
-]:
-
-    if not os.path.exists(file):
-
-        missing_files.append(file)
-
-
-if missing_files:
-
-    st.error(
-        "Missing model files: "
-        + ", ".join(missing_files)
-    )
-
-    st.stop()
-
-
-if uploaded_file is None and not os.path.exists(DATA_FILE):
-
-    st.error(
-        f"Excel file not found: {DATA_FILE}"
-    )
-
-    st.stop()
-
+# FILE CHECK
 
 # ============================================================
-# LOAD
+
+if (
+uploaded_file is None
+and not os.path.exists(DATA_FILE)
+):
+
+```
+st.error(
+    f"Excel file not found: {DATA_FILE}"
+)
+
+st.info(
+    "Please upload your Excel file from the sidebar."
+)
+
+st.stop()
+```
+
+# ============================================================
+
+# LOAD DATA
+
 # ============================================================
 
 try:
 
-    model, scaler, features = load_artifacts()
-
-    history = load_data(
-        uploaded_file
-    )
+```
+history = load_data(
+    uploaded_file
+)
+```
 
 except Exception as e:
 
-    st.error(
-        f"Error loading project files: {e}"
-    )
+```
+st.error(
+    f"Error loading Excel file: {e}"
+)
 
-    st.stop()
-
+st.stop()
+```
 
 # ============================================================
+
 # DATA INFORMATION
+
 # ============================================================
 
-st.subheader("📊 Historical Data")
+st.subheader(
+"📊 Historical Data"
+)
 
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
 
-    st.metric(
-        "Rows",
-        len(history)
-    )
+```
+st.metric(
+    "Rows",
+    len(history)
+)
+```
 
 with col2:
 
-    st.metric(
-        "Start Date",
-        history["Date"].min().strftime("%d-%m-%Y")
-    )
+```
+st.metric(
+    "Start Date",
+    history["Date"]
+    .min()
+    .strftime("%d-%m-%Y")
+)
+```
 
 with col3:
 
-    st.metric(
-        "End Date",
-        history["Date"].max().strftime("%d-%m-%Y")
-    )
+```
+st.metric(
+    "End Date",
+    history["Date"]
+    .max()
+    .strftime("%d-%m-%Y")
+)
+```
 
 with col4:
 
-    latest_close = history["Close"].iloc[-1]
+```
+latest_close = float(
+    history["Close"].iloc[-1]
+)
 
-    st.metric(
-        "Latest Close",
-        f"₹{latest_close:,.2f}"
-    )
-
+st.metric(
+    "Latest Close",
+    f"₹{latest_close:,.2f}"
+)
+```
 
 # ============================================================
+
 # HISTORICAL CHART
+
 # ============================================================
 
-st.subheader("📈 Historical Reliance Closing Price")
+st.subheader(
+"📈 Historical Reliance Closing Price"
+)
 
 fig, ax = plt.subplots(
-    figsize=(14, 5)
+figsize=(14, 5)
 )
 
 recent_history = history.tail(250)
 
 ax.plot(
-    recent_history["Date"],
-    recent_history["Close"],
-    label="Actual Close"
+
+```
+recent_history["Date"],
+
+recent_history["Close"],
+
+label="Actual Close",
+
+linewidth=2
+```
+
 )
 
-ax.set_xlabel("Date")
-ax.set_ylabel("Price (₹)")
-ax.set_title("Reliance Industries Historical Closing Price")
+ax.set_xlabel(
+"Date"
+)
+
+ax.set_ylabel(
+"Price (₹)"
+)
+
+ax.set_title(
+"Reliance Industries Historical Closing Price"
+)
 
 ax.legend()
 
-ax.grid(alpha=0.3)
+ax.grid(
+alpha=0.3
+)
 
-plt.xticks(rotation=45)
+plt.xticks(
+rotation=45
+)
 
-st.pyplot(fig)
+st.pyplot(
+fig
+)
 
-plt.close()
-
+plt.close(
+fig
+)
 
 # ============================================================
+
 # BACKTEST
+
 # ============================================================
 
 if run_backtest:
 
-    st.subheader(
-        f"🔍 Last {backtest_days}-Trading-Day Backtest"
-    )
+```
+st.subheader(
+    f"🔍 Last {backtest_days}-Trading-Day ARIMA Backtest"
+)
 
-    with st.spinner(
-        f"Testing model on last {backtest_days} trading days..."
-    ):
+with st.spinner(
+    f"Testing ARIMA on the last {backtest_days} trading days..."
+):
 
-        try:
+    try:
 
-            backtest_result, metrics = backtest_model(
-                history,
-                model,
-                scaler,
-                features,
-                backtest_days
+        backtest_result, metrics = arima_backtest(
+
+            history,
+
+            backtest_days
+
+        )
+
+        # ------------------------------------------------
+        # METRICS
+        # ------------------------------------------------
+
+        c1, c2, c3 = st.columns(3)
+
+
+        with c1:
+
+            st.metric(
+                "MAE",
+                f"₹{metrics['MAE']:,.2f}"
             )
 
-            c1, c2, c3, c4 = st.columns(4)
 
-            with c1:
+        with c2:
 
-                st.metric(
-                    "MAE",
-                    f"₹{metrics['MAE']:,.2f}"
-                )
-
-            with c2:
-
-                st.metric(
-                    "RMSE",
-                    f"₹{metrics['RMSE']:,.2f}"
-                )
-
-            with c3:
-
-                st.metric(
-                    "MAPE",
-                    f"{metrics['MAPE']:.2f}%"
-                )
-
-            with c4:
-
-                st.metric(
-                    "Approx. Accuracy",
-                    f"{metrics['Accuracy']:.2f}%"
-                )
-
-            # -------------------------------
-            # BACKTEST GRAPH
-            # -------------------------------
-
-            fig2, ax2 = plt.subplots(
-                figsize=(14, 6)
+            st.metric(
+                "RMSE",
+                f"₹{metrics['RMSE']:,.2f}"
             )
 
-            ax2.plot(
-                backtest_result["Date"],
-                backtest_result["Actual_Close"],
-                label="Actual Price",
-                linewidth=2
+
+        with c3:
+
+            st.metric(
+                "MAPE",
+                f"{metrics['MAPE']:.2f}%"
             )
 
-            ax2.plot(
-                backtest_result["Date"],
-                backtest_result["Predicted_Close"],
-                label="Predicted Price",
-                linestyle="--",
-                linewidth=2
-            )
 
-            ax2.set_title(
-                f"Actual vs Predicted - Last {backtest_days} Trading Days"
-            )
+        # ------------------------------------------------
+        # INTERPRETATION
+        # ------------------------------------------------
 
-            ax2.set_xlabel("Date")
-            ax2.set_ylabel("Price (₹)")
-
-            ax2.legend()
-
-            ax2.grid(alpha=0.3)
-
-            plt.xticks(rotation=45)
-
-            st.pyplot(fig2)
-
-            plt.close()
-
-            # -------------------------------
-            # TABLE
-            # -------------------------------
-
-            st.dataframe(
-                backtest_result.style.format(
-                    {
-                        "Actual_Close": "₹{:.2f}",
-                        "Predicted_Close": "₹{:.2f}",
-                        "Error": "₹{:.2f}",
-                        "Absolute_Error": "₹{:.2f}",
-                        "Percentage_Error": "{:.2f}%"
-                    }
-                ),
-                use_container_width=True
-            )
-
-            # -------------------------------
-            # DOWNLOAD
-            # -------------------------------
-
-            csv = backtest_result.to_csv(
-                index=False
-            )
-
-            st.download_button(
-                "⬇️ Download Backtest CSV",
-                csv,
-                file_name=f"reliance_backtest_{backtest_days}_days.csv",
-                mime="text/csv"
-            )
-
-            if metrics["MAPE"] > 20:
-
-                st.warning(
-                    "⚠️ The model has high error on this historical period. "
-                    "The 30/60-day future forecast should therefore be treated "
-                    "as low-confidence."
-                )
-
-            elif metrics["MAPE"] > 10:
-
-                st.warning(
-                    "⚠️ The model has moderate forecasting error."
-                )
-
-            else:
-
-                st.success(
-                    "✅ The model shows relatively low historical forecasting error."
-                )
-
-        except Exception as e:
+        if metrics["MAPE"] > 20:
 
             st.error(
-                f"Backtest error: {e}"
+                "⚠️ ARIMA has high forecasting error "
+                "on this historical period. "
+                "Future forecasts should be treated "
+                "as low-confidence."
+            )
+
+        elif metrics["MAPE"] > 10:
+
+            st.warning(
+                "⚠️ ARIMA has moderate forecasting error "
+                "on this historical period."
+            )
+
+        else:
+
+            st.success(
+                "✅ ARIMA shows relatively low "
+                "historical forecasting error."
             )
 
 
+        # ------------------------------------------------
+        # BACKTEST CHART
+        # ------------------------------------------------
+
+        st.subheader(
+            "📉 Actual vs ARIMA Predicted Price"
+        )
+
+
+        fig2, ax2 = plt.subplots(
+            figsize=(14, 6)
+        )
+
+
+        ax2.plot(
+
+            backtest_result["Date"],
+
+            backtest_result["Actual_Close"],
+
+            label="Actual Price",
+
+            linewidth=2
+        )
+
+
+        ax2.plot(
+
+            backtest_result["Date"],
+
+            backtest_result["Predicted_Close"],
+
+            label="ARIMA Predicted Price",
+
+            linestyle="--",
+
+            linewidth=2
+        )
+
+
+        ax2.fill_between(
+
+            backtest_result["Date"],
+
+            backtest_result["ARIMA_Lower_95"],
+
+            backtest_result["ARIMA_Upper_95"],
+
+            alpha=0.15,
+
+            label="95% Confidence Interval"
+        )
+
+
+        ax2.set_title(
+
+            f"ARIMA Backtest - Last {backtest_days} Trading Days"
+        )
+
+
+        ax2.set_xlabel(
+            "Date"
+        )
+
+
+        ax2.set_ylabel(
+            "Price (₹)"
+        )
+
+
+        ax2.legend()
+
+
+        ax2.grid(
+            alpha=0.3
+        )
+
+
+        plt.xticks(
+            rotation=45
+        )
+
+
+        st.pyplot(
+            fig2
+        )
+
+
+        plt.close(
+            fig2
+        )
+
+
+        # ------------------------------------------------
+        # TABLE
+        # ------------------------------------------------
+
+        st.subheader(
+            "📋 Backtest Results"
+        )
+
+
+        st.dataframe(
+
+            backtest_result.style.format({
+
+                "Actual_Close":
+                    "₹{:.2f}",
+
+                "Predicted_Close":
+                    "₹{:.2f}",
+
+                "ARIMA_Lower_95":
+                    "₹{:.2f}",
+
+                "ARIMA_Upper_95":
+                    "₹{:.2f}",
+
+                "Error":
+                    "₹{:.2f}",
+
+                "Absolute_Error":
+                    "₹{:.2f}",
+
+                "Percentage_Error":
+                    "{:.2f}%"
+
+            }),
+
+            use_container_width=True
+
+        )
+
+
+        # ------------------------------------------------
+        # DOWNLOAD
+        # ------------------------------------------------
+
+        csv = backtest_result.to_csv(
+            index=False
+        )
+
+
+        st.download_button(
+
+            "⬇️ Download Backtest CSV",
+
+            csv,
+
+            file_name=(
+                f"reliance_arima_backtest_"
+                f"{backtest_days}_days.csv"
+            ),
+
+            mime="text/csv"
+
+        )
+
+
+    except Exception as e:
+
+        st.error(
+            f"Backtest error: {e}"
+        )
+```
+
 # ============================================================
+
 # FUTURE FORECAST
+
 # ============================================================
 
 if run_forecast:
 
-    st.subheader(
-        f"🔮 Next {horizon} Business-Day Forecast"
-    )
+```
+st.subheader(
+    f"🔮 Next {horizon} Business-Day ARIMA Forecast"
+)
 
-    with st.spinner(
-        "Generating forecast..."
-    ):
+with st.spinner(
+    "Generating ARIMA forecast..."
+):
 
-        try:
+    try:
 
-            lr_forecast = recursive_forecast(
-                history,
-                model,
-                scaler,
-                features,
-                horizon
+        # ------------------------------------------------
+        # ARIMA FORECAST
+        # ------------------------------------------------
+
+        forecast_result = arima_forecast(
+
+            history,
+
+            horizon
+
+        )
+
+
+        # ------------------------------------------------
+        # FORECAST METRICS
+        # ------------------------------------------------
+
+        latest_price = float(
+            history["Close"].iloc[-1]
+        )
+
+
+        next_day_price = float(
+
+            forecast_result[
+                "Predicted_Close_ARIMA"
+            ].iloc[0]
+
+        )
+
+
+        final_price = float(
+
+            forecast_result[
+                "Predicted_Close_ARIMA"
+            ].iloc[-1]
+
+        )
+
+
+        expected_change = (
+
+            (
+                final_price
+                - latest_price
             )
 
-            if show_arima:
+            / latest_price
 
-                arima_result = arima_forecast(
-                    history,
-                    horizon
-                )
+            * 100
 
-                forecast_result = pd.merge(
-                    lr_forecast,
-                    arima_result,
-                    on="Date",
-                    how="left"
-                )
-
-            else:
-
-                forecast_result = lr_forecast.copy()
+        )
 
 
-            # ====================================================
-            # FORECAST METRICS
-            # ====================================================
+        # ------------------------------------------------
+        # TOP METRICS
+        # ------------------------------------------------
 
-            latest_price = float(
-                history["Close"].iloc[-1]
-            )
-
-            next_day_price = float(
-                lr_forecast["Predicted_Close_LR"].iloc[0]
-            )
-
-            final_price = float(
-                lr_forecast["Predicted_Close_LR"].iloc[-1]
-            )
-
-            expected_change = (
-                (final_price - latest_price)
-                / latest_price
-                * 100
-            )
-
-            c1, c2, c3, c4 = st.columns(4)
-
-            with c1:
-
-                st.metric(
-                    "Current Price",
-                    f"₹{latest_price:,.2f}"
-                )
-
-            with c2:
-
-                st.metric(
-                    "Next Trading Day",
-                    f"₹{next_day_price:,.2f}"
-                )
-
-            with c3:
-
-                st.metric(
-                    f"Day {horizon}",
-                    f"₹{final_price:,.2f}"
-                )
-
-            with c4:
-
-                st.metric(
-                    "Expected Change",
-                    f"{expected_change:+.2f}%"
-                )
+        c1, c2, c3, c4 = st.columns(4)
 
 
-            # ====================================================
-            # FORECAST CHART
-            # ====================================================
+        with c1:
 
-            st.subheader("📈 Forecast Chart")
+            st.metric(
 
-            fig3, ax3 = plt.subplots(
-                figsize=(15, 7)
-            )
+                "Current Price",
 
-            chart_history = history.tail(120)
+                f"₹{latest_price:,.2f}"
 
-            ax3.plot(
-                chart_history["Date"],
-                chart_history["Close"],
-                label="Historical Close",
-                linewidth=2
-            )
-
-            ax3.plot(
-                forecast_result["Date"],
-                forecast_result["Predicted_Close_LR"],
-                label="Linear Regression",
-                linewidth=2,
-                linestyle="--"
-            )
-
-            if show_arima:
-
-                ax3.plot(
-                    forecast_result["Date"],
-                    forecast_result["Predicted_Close_ARIMA"],
-                    label="ARIMA",
-                    linewidth=2,
-                    linestyle=":"
-                )
-
-                ax3.fill_between(
-                    forecast_result["Date"],
-                    forecast_result["ARIMA_Lower_95"],
-                    forecast_result["ARIMA_Upper_95"],
-                    alpha=0.15,
-                    label="ARIMA 95% Confidence Interval"
-                )
-
-            ax3.axvline(
-                history["Date"].max(),
-                linestyle="--",
-                linewidth=1.5,
-                label="Forecast Start"
-            )
-
-            ax3.set_title(
-                f"Reliance Industries - {horizon} Business-Day Forecast"
-            )
-
-            ax3.set_xlabel("Date")
-            ax3.set_ylabel("Price (₹)")
-
-            ax3.legend()
-
-            ax3.grid(alpha=0.3)
-
-            plt.xticks(rotation=45)
-
-            st.pyplot(fig3)
-
-            plt.close()
-
-
-            # ====================================================
-            # FORECAST TABLE
-            # ====================================================
-
-            st.subheader("📋 Forecast Values")
-
-            display_forecast = forecast_result.copy()
-
-            st.dataframe(
-                display_forecast.style.format(
-                    {
-                        "Predicted_Close_LR": "₹{:.2f}",
-                        "Predicted_Close_ARIMA": "₹{:.2f}",
-                        "ARIMA_Lower_95": "₹{:.2f}",
-                        "ARIMA_Upper_95": "₹{:.2f}"
-                    }
-                ),
-                use_container_width=True
             )
 
 
-            # ====================================================
-            # DOWNLOAD
-            # ====================================================
+        with c2:
 
-            csv = forecast_result.to_csv(
-                index=False
-            )
+            st.metric(
 
-            st.download_button(
-                "⬇️ Download Forecast CSV",
-                csv,
-                file_name=f"reliance_forecast_{horizon}_days.csv",
-                mime="text/csv"
+                "Next Trading Day",
+
+                f"₹{next_day_price:,.2f}"
+
             )
 
 
-            # ====================================================
-            # INTERPRETATION
-            # ====================================================
+        with c3:
 
-            st.subheader("🧠 Forecast Interpretation")
+            st.metric(
 
-            if expected_change > 5:
+                f"Day {horizon}",
 
-                st.success(
-                    f"📈 The Linear Regression model forecasts an "
-                    f"approximately {expected_change:.2f}% increase "
-                    f"over the next {horizon} business days."
-                )
+                f"₹{final_price:,.2f}"
 
-            elif expected_change < -5:
-
-                st.error(
-                    f"📉 The Linear Regression model forecasts an "
-                    f"approximately {abs(expected_change):.2f}% decrease "
-                    f"over the next {horizon} business days."
-                )
-
-            else:
-
-                st.info(
-                    f"➡️ The Linear Regression model forecasts a relatively "
-                    f"stable movement over the next {horizon} business days."
-                )
+            )
 
 
-            # ====================================================
-            # IMPORTANT WARNING
-            # ====================================================
+        with c4:
+
+            st.metric(
+
+                "Expected Change",
+
+                f"{expected_change:+.2f}%"
+
+            )
+
+
+        # =================================================
+        # FORECAST CHART
+        # =================================================
+
+        st.subheader(
+            "📈 ARIMA Forecast Chart"
+        )
+
+
+        fig3, ax3 = plt.subplots(
+            figsize=(15, 7)
+        )
+
+
+        chart_history = history.tail(120)
+
+
+        # Historical price
+
+        ax3.plot(
+
+            chart_history["Date"],
+
+            chart_history["Close"],
+
+            label="Historical Close",
+
+            linewidth=2
+
+        )
+
+
+        # Forecast
+
+        ax3.plot(
+
+            forecast_result["Date"],
+
+            forecast_result[
+                "Predicted_Close_ARIMA"
+            ],
+
+            label="ARIMA Forecast",
+
+            linewidth=2,
+
+            linestyle="--"
+
+        )
+
+
+        # Confidence interval
+
+        ax3.fill_between(
+
+            forecast_result["Date"],
+
+            forecast_result[
+                "ARIMA_Lower_95"
+            ],
+
+            forecast_result[
+                "ARIMA_Upper_95"
+            ],
+
+            alpha=0.15,
+
+            label="ARIMA 95% Confidence Interval"
+
+        )
+
+
+        # Forecast start
+
+        ax3.axvline(
+
+            history["Date"].max(),
+
+            linestyle="--",
+
+            linewidth=1.5,
+
+            label="Forecast Start"
+
+        )
+
+
+        ax3.set_title(
+
+            f"Reliance Industries - "
+            f"{horizon} Business-Day ARIMA Forecast"
+
+        )
+
+
+        ax3.set_xlabel(
+            "Date"
+        )
+
+
+        ax3.set_ylabel(
+            "Price (₹)"
+        )
+
+
+        ax3.legend()
+
+
+        ax3.grid(
+            alpha=0.3
+        )
+
+
+        plt.xticks(
+            rotation=45
+        )
+
+
+        st.pyplot(
+            fig3
+        )
+
+
+        plt.close(
+            fig3
+        )
+
+
+        # =================================================
+        # FORECAST TABLE
+        # =================================================
+
+        st.subheader(
+            "📋 Forecast Values"
+        )
+
+
+        display_forecast = (
+            forecast_result.copy()
+        )
+
+
+        st.dataframe(
+
+            display_forecast.style.format({
+
+                "Predicted_Close_ARIMA":
+                    "₹{:.2f}",
+
+                "ARIMA_Lower_95":
+                    "₹{:.2f}",
+
+                "ARIMA_Upper_95":
+                    "₹{:.2f}"
+
+            }),
+
+            use_container_width=True
+
+        )
+
+
+        # =================================================
+        # DOWNLOAD
+        # =================================================
+
+        csv = forecast_result.to_csv(
+            index=False
+        )
+
+
+        st.download_button(
+
+            "⬇️ Download Forecast CSV",
+
+            csv,
+
+            file_name=(
+
+                f"reliance_arima_forecast_"
+                f"{horizon}_days.csv"
+
+            ),
+
+            mime="text/csv"
+
+        )
+
+
+        # =================================================
+        # INTERPRETATION
+        # =================================================
+
+        st.subheader(
+            "🧠 Forecast Interpretation"
+        )
+
+
+        if expected_change > 5:
+
+            st.success(
+
+                f"📈 The ARIMA model forecasts an "
+                f"approximately {expected_change:.2f}% "
+                f"increase over the next "
+                f"{horizon} business days."
+
+            )
+
+
+        elif expected_change < -5:
 
             st.warning(
-                "⚠️ Stock-market forecasts are uncertain. "
-                "The model uses historical price patterns and technical "
-                "indicators and cannot predict unexpected market events."
+
+                f"📉 The ARIMA model forecasts an "
+                f"approximately {abs(expected_change):.2f}% "
+                f"decrease over the next "
+                f"{horizon} business days."
+
             )
 
 
-        except Exception as e:
+        else:
 
-            st.error(
-                f"Forecast error: {e}"
+            st.info(
+
+                f"➡️ The ARIMA model forecasts a "
+                f"relatively stable movement over "
+                f"the next {horizon} business days."
+
             )
 
+
+        # =================================================
+        # CONFIDENCE INFORMATION
+        # =================================================
+
+        lower_final = float(
+
+            forecast_result[
+                "ARIMA_Lower_95"
+            ].iloc[-1]
+
+        )
+
+
+        upper_final = float(
+
+            forecast_result[
+                "ARIMA_Upper_95"
+            ].iloc[-1]
+
+        )
+
+
+        st.info(
+
+            f"📊 Day {horizon} ARIMA estimate: "
+            f"₹{final_price:,.2f}. "
+            f"The approximate 95% confidence interval "
+            f"is ₹{lower_final:,.2f} to "
+            f"₹{upper_final:,.2f}."
+
+        )
+
+
+        # =================================================
+        # WARNING
+        # =================================================
+
+        st.warning(
+
+            "⚠️ Stock-market forecasts are uncertain. "
+            "ARIMA uses historical price patterns and "
+            "cannot predict unexpected news, market "
+            "events, corporate announcements, global "
+            "economic changes, or sudden volatility. "
+            "This application is for educational and "
+            "research purposes only."
+
+        )
+
+
+    except Exception as e:
+
+        st.error(
+            f"Forecast error: {e}"
+        )
+```
 
 # ============================================================
+
 # FOOTER
+
 # ============================================================
 
 st.markdown("---")
 
 st.caption(
-    "Reliance Industries Stock Price Forecasting | "
-    "Machine Learning + Time Series Analysis"
+
+```
+"Reliance Industries Stock Price Forecasting | "
+"ARIMA Time Series Analysis | "
+"Educational Project"
+```
+
 )
