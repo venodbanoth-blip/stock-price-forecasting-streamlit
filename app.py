@@ -1,4 +1,5 @@
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -6,6 +7,13 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 from statsmodels.tsa.arima.model import ARIMA
+
+
+# ============================================================
+# WARNINGS
+# ============================================================
+
+warnings.filterwarnings("ignore")
 
 
 # ============================================================
@@ -21,7 +29,8 @@ st.set_page_config(
 st.title("📈 Reliance Industries Stock Price Forecasting")
 
 st.caption(
-    "ARIMA Time Series Forecasting | Historical Backtesting | Future Forecast"
+    "Automatic ARIMA Model Selection | "
+    "MAE | RMSE | MAPE | Historical Backtesting | Future Forecast"
 )
 
 
@@ -110,7 +119,7 @@ def load_data(uploaded_file=None):
         )
 
     # --------------------------------------------------------
-    # REMOVE INVALID DATE/CLOSE
+    # REMOVE INVALID ROWS
     # --------------------------------------------------------
 
     df = df.dropna(
@@ -121,7 +130,15 @@ def load_data(uploaded_file=None):
     )
 
     # --------------------------------------------------------
-    # SORT BY DATE
+    # REMOVE NON-POSITIVE CLOSE
+    # --------------------------------------------------------
+
+    df = df[
+        df["Close"] > 0
+    ]
+
+    # --------------------------------------------------------
+    # SORT
     # --------------------------------------------------------
 
     df = df.sort_values(
@@ -162,7 +179,7 @@ def load_data(uploaded_file=None):
 # PREPARE CLOSE VALUES
 # ============================================================
 
-def prepare_close_series(history):
+def prepare_close_values(history):
 
     df = history.copy()
 
@@ -196,6 +213,14 @@ def prepare_close_series(history):
     )
 
     # --------------------------------------------------------
+    # REMOVE NON-POSITIVE VALUES
+    # --------------------------------------------------------
+
+    df = df[
+        df["Close"] > 0
+    ]
+
+    # --------------------------------------------------------
     # SORT
     # --------------------------------------------------------
 
@@ -213,95 +238,115 @@ def prepare_close_series(history):
     )
 
     # --------------------------------------------------------
-    # RESET INDEX
-    # --------------------------------------------------------
-
-    df = df.reset_index(
-        drop=True
-    )
-
-    # --------------------------------------------------------
-    # CHECK OBSERVATIONS
+    # CHECK LENGTH
     # --------------------------------------------------------
 
     if len(df) < 30:
 
         raise ValueError(
-            "At least 30 observations are required for ARIMA."
+            "At least 30 observations are required."
         )
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # Return NumPy array.
-    #
-    # This avoids:
-    # ValueError: No supported index is available.
+    # RETURN NUMPY ARRAY
     # --------------------------------------------------------
 
-    close_values = np.asarray(
+    values = np.asarray(
         df["Close"],
         dtype=float
     )
 
-    return close_values
+    # --------------------------------------------------------
+    # FINITE CHECK
+    # --------------------------------------------------------
+
+    if not np.all(
+        np.isfinite(values)
+    ):
+
+        raise ValueError(
+            "Close price contains invalid values."
+        )
+
+    return values
 
 
 # ============================================================
-# FIT ARIMA MODEL
+# ARIMA ORDERS TO TEST
 # ============================================================
 
-def fit_arima_model(close_values):
+ARIMA_ORDERS = [
 
-    # --------------------------------------------------------
-    # CONVERT TO NUMPY
-    # --------------------------------------------------------
+    (0, 1, 0),
+
+    (0, 1, 1),
+
+    (1, 1, 0),
+
+    (1, 1, 1),
+
+    (1, 1, 2),
+
+    (2, 1, 0),
+
+    (2, 1, 1),
+
+    (2, 1, 2),
+
+    (3, 1, 0),
+
+    (3, 1, 1),
+
+    (3, 1, 2),
+
+    (4, 1, 0),
+
+    (4, 1, 1),
+
+    (4, 1, 2),
+
+    (5, 1, 0),
+
+    (5, 1, 1),
+
+    (5, 1, 2)
+
+]
+
+
+# ============================================================
+# FIT ARIMA
+# ============================================================
+
+def fit_arima_model(
+    close_values,
+    order
+):
 
     close_values = np.asarray(
         close_values,
         dtype=float
     )
 
-    # --------------------------------------------------------
-    # CHECK LENGTH
-    # --------------------------------------------------------
-
     if len(close_values) < 30:
 
         raise ValueError(
-            "At least 30 observations are required for ARIMA."
+            "At least 30 observations are required."
         )
-
-    # --------------------------------------------------------
-    # CHECK FINITE VALUES
-    # --------------------------------------------------------
 
     if not np.all(
         np.isfinite(close_values)
     ):
 
         raise ValueError(
-            "Close price data contains invalid values."
+            "Invalid values found in close prices."
         )
-
-    # --------------------------------------------------------
-    # CHECK POSITIVE PRICE
-    # --------------------------------------------------------
-
-    if np.any(
-        close_values <= 0
-    ):
-
-        raise ValueError(
-            "Close price contains zero or negative values."
-        )
-
-    # --------------------------------------------------------
-    # ARIMA MODEL
-    # --------------------------------------------------------
 
     model = ARIMA(
         close_values,
-        order=(5, 1, 0)
+        order=order,
+        enforce_stationarity=False,
+        enforce_invertibility=False
     )
 
     fitted_model = model.fit()
@@ -310,7 +355,107 @@ def fit_arima_model(close_values):
 
 
 # ============================================================
-# CONFIDENCE INTERVAL HELPER
+# CALCULATE METRICS
+# ============================================================
+
+def calculate_metrics(
+    actual,
+    predicted
+):
+
+    actual = np.asarray(
+        actual,
+        dtype=float
+    )
+
+    predicted = np.asarray(
+        predicted,
+        dtype=float
+    )
+
+    # --------------------------------------------------------
+    # LENGTH
+    # --------------------------------------------------------
+
+    length = min(
+        len(actual),
+        len(predicted)
+    )
+
+    actual = actual[:length]
+
+    predicted = predicted[:length]
+
+    # --------------------------------------------------------
+    # ERROR
+    # --------------------------------------------------------
+
+    error = (
+        predicted
+        - actual
+    )
+
+    absolute_error = np.abs(
+        error
+    )
+
+    # --------------------------------------------------------
+    # MAE
+    # --------------------------------------------------------
+
+    mae = np.mean(
+        absolute_error
+    )
+
+    # --------------------------------------------------------
+    # RMSE
+    # --------------------------------------------------------
+
+    rmse = np.sqrt(
+        np.mean(
+            error ** 2
+        )
+    )
+
+    # --------------------------------------------------------
+    # MAPE
+    # --------------------------------------------------------
+
+    non_zero_mask = (
+        actual != 0
+    )
+
+    if np.any(
+        non_zero_mask
+    ):
+
+        mape = np.mean(
+            np.abs(
+                (
+                    actual[non_zero_mask]
+                    - predicted[non_zero_mask]
+                )
+                / actual[non_zero_mask]
+            )
+        ) * 100
+
+    else:
+
+        mape = np.nan
+
+    return {
+
+        "MAE": float(mae),
+
+        "RMSE": float(rmse),
+
+        "MAPE": float(mape)
+
+    }
+
+
+# ============================================================
+# CONFIDENCE INTERVAL
 # ============================================================
 
 def get_confidence_interval(
@@ -322,20 +467,14 @@ def get_confidence_interval(
     )
 
     # --------------------------------------------------------
-    # Convert confidence interval to NumPy.
-    #
-    # Works whether Statsmodels returns:
-    # DataFrame OR NumPy ndarray.
+    # IMPORTANT:
+    # Convert DataFrame or NumPy array to NumPy.
     # --------------------------------------------------------
 
     confidence = np.asarray(
         confidence,
         dtype=float
     )
-
-    # --------------------------------------------------------
-    # CHECK SHAPE
-    # --------------------------------------------------------
 
     if confidence.ndim != 2:
 
@@ -360,40 +499,224 @@ def get_confidence_interval(
 
 
 # ============================================================
-# FUTURE ARIMA FORECAST
+# AUTOMATIC ARIMA MODEL SELECTION
 # ============================================================
 
-def arima_forecast(
-    history,
-    n_days
+def select_best_arima(
+    train_values,
+    validation_days
 ):
 
+    train_values = np.asarray(
+        train_values,
+        dtype=float
+    )
+
     # --------------------------------------------------------
-    # VALIDATE HORIZON
+    # CHECK DATA
     # --------------------------------------------------------
 
-    n_days = int(n_days)
-
-    if n_days < 1:
+    if len(train_values) <= validation_days + 30:
 
         raise ValueError(
-            "Forecast horizon must be at least 1 day."
+            "Not enough observations for ARIMA model selection."
         )
 
     # --------------------------------------------------------
-    # PREPARE DATA
+    # SPLIT DATA
     # --------------------------------------------------------
 
-    close_values = prepare_close_series(
+    model_train = train_values[
+        :-validation_days
+    ]
+
+    validation_actual = train_values[
+        -validation_days:
+    ]
+
+    # --------------------------------------------------------
+    # RESULTS
+    # --------------------------------------------------------
+
+    results = []
+
+    # --------------------------------------------------------
+    # TEST EACH ARIMA MODEL
+    # --------------------------------------------------------
+
+    for order in ARIMA_ORDERS:
+
+        try:
+
+            model = fit_arima_model(
+                model_train,
+                order
+            )
+
+            forecast_result = model.get_forecast(
+                steps=validation_days
+            )
+
+            predictions = np.asarray(
+                forecast_result.predicted_mean,
+                dtype=float
+            )
+
+            metrics = calculate_metrics(
+                validation_actual,
+                predictions
+            )
+
+            results.append({
+
+                "ARIMA_Order":
+                    str(order),
+
+                "p":
+                    order[0],
+
+                "d":
+                    order[1],
+
+                "q":
+                    order[2],
+
+                "MAE":
+                    metrics["MAE"],
+
+                "RMSE":
+                    metrics["RMSE"],
+
+                "MAPE":
+                    metrics["MAPE"],
+
+                "Status":
+                    "Success"
+
+            })
+
+        except Exception as e:
+
+            results.append({
+
+                "ARIMA_Order":
+                    str(order),
+
+                "p":
+                    order[0],
+
+                "d":
+                    order[1],
+
+                "q":
+                    order[2],
+
+                "MAE":
+                    np.nan,
+
+                "RMSE":
+                    np.nan,
+
+                "MAPE":
+                    np.nan,
+
+                "Status":
+                    f"Failed: {str(e)[:60]}"
+
+            })
+
+    # --------------------------------------------------------
+    # RESULTS DATAFRAME
+    # --------------------------------------------------------
+
+    comparison = pd.DataFrame(
+        results
+    )
+
+    # --------------------------------------------------------
+    # REMOVE FAILED MODELS
+    # --------------------------------------------------------
+
+    valid_results = comparison[
+        comparison["MAPE"].notna()
+    ].copy()
+
+    if len(valid_results) == 0:
+
+        raise ValueError(
+            "None of the tested ARIMA models could be fitted."
+        )
+
+    # --------------------------------------------------------
+    # SORT BY MAPE
+    # --------------------------------------------------------
+
+    valid_results = valid_results.sort_values(
+        by=[
+            "MAPE",
+            "RMSE",
+            "MAE"
+        ]
+    ).reset_index(
+        drop=True
+    )
+
+    # --------------------------------------------------------
+    # BEST ORDER
+    # --------------------------------------------------------
+
+    best_order = (
+
+        int(
+            valid_results.loc[
+                0,
+                "p"
+            ]
+        ),
+
+        int(
+            valid_results.loc[
+                0,
+                "d"
+            ]
+        ),
+
+        int(
+            valid_results.loc[
+                0,
+                "q"
+            ]
+        )
+
+    )
+
+    return (
+        best_order,
+        valid_results
+    )
+
+
+# ============================================================
+# FINAL FUTURE FORECAST
+# ============================================================
+
+def generate_future_forecast(
+    history,
+    horizon,
+    best_order
+):
+
+    close_values = prepare_close_values(
         history
     )
 
     # --------------------------------------------------------
-    # FIT MODEL
+    # FIT BEST MODEL ON ALL AVAILABLE DATA
     # --------------------------------------------------------
 
     fitted_model = fit_arima_model(
-        close_values
+        close_values,
+        best_order
     )
 
     # --------------------------------------------------------
@@ -401,12 +724,8 @@ def arima_forecast(
     # --------------------------------------------------------
 
     forecast_result = fitted_model.get_forecast(
-        steps=n_days
+        steps=horizon
     )
-
-    # --------------------------------------------------------
-    # FORECAST VALUES
-    # --------------------------------------------------------
 
     forecast = np.asarray(
         forecast_result.predicted_mean,
@@ -425,17 +744,7 @@ def arima_forecast(
     )
 
     # --------------------------------------------------------
-    # CHECK FORECAST LENGTH
-    # --------------------------------------------------------
-
-    if len(forecast) != n_days:
-
-        raise ValueError(
-            "Forecast length does not match requested horizon."
-        )
-
-    # --------------------------------------------------------
-    # LAST HISTORICAL DATE
+    # LAST DATE
     # --------------------------------------------------------
 
     last_date = pd.to_datetime(
@@ -444,14 +753,17 @@ def arima_forecast(
 
     # --------------------------------------------------------
     # FUTURE BUSINESS DAYS
-    #
-    # Monday-Friday only.
-    # NSE holidays are not removed.
     # --------------------------------------------------------
 
     future_dates = pd.bdate_range(
-        start=last_date + pd.Timedelta(days=1),
-        periods=n_days
+
+        start=(
+            last_date
+            + pd.Timedelta(days=1)
+        ),
+
+        periods=horizon
+
     )
 
     # --------------------------------------------------------
@@ -460,13 +772,17 @@ def arima_forecast(
 
     result = pd.DataFrame({
 
-        "Date": future_dates,
+        "Date":
+            future_dates,
 
-        "Predicted_Close_ARIMA": forecast,
+        "Predicted_Close":
+            forecast,
 
-        "ARIMA_Lower_95": lower_bound,
+        "Lower_95":
+            lower_bound,
 
-        "ARIMA_Upper_95": upper_bound
+        "Upper_95":
+            upper_bound
 
     })
 
@@ -474,104 +790,61 @@ def arima_forecast(
 
 
 # ============================================================
-# ARIMA BACKTEST
+# HISTORICAL BACKTEST USING BEST MODEL
 # ============================================================
 
-def arima_backtest(
+def final_backtest(
     history,
-    test_days
+    test_days,
+    best_order
 ):
 
-    test_days = int(test_days)
-
     # --------------------------------------------------------
-    # CHECK DATA SIZE
+    # PREPARE VALUES
     # --------------------------------------------------------
 
-    if len(history) <= test_days + 30:
+    values = prepare_close_values(
+        history
+    )
+
+    if len(values) <= test_days + 30:
 
         raise ValueError(
-            f"Not enough data for a {test_days}-day backtest. "
-            f"At least {test_days + 31} rows are recommended."
+            f"Not enough data for {test_days}-day backtest."
         )
 
     # --------------------------------------------------------
-    # TRAIN DATA
+    # TRAIN
     # --------------------------------------------------------
 
-    train_data = history.iloc[
+    train_values = values[
         :-test_days
-    ].copy()
+    ]
 
     # --------------------------------------------------------
-    # TEST DATA
+    # ACTUAL
     # --------------------------------------------------------
 
-    actual_data = history.iloc[
+    actual_values = values[
         -test_days:
-    ].copy()
+    ]
 
     # --------------------------------------------------------
-    # CLEAN TEST DATA
+    # FIT BEST MODEL
     # --------------------------------------------------------
 
-    actual_data["Date"] = pd.to_datetime(
-        actual_data["Date"],
-        errors="coerce"
-    )
-
-    actual_data["Close"] = pd.to_numeric(
-        actual_data["Close"],
-        errors="coerce"
-    )
-
-    actual_data = actual_data.dropna(
-        subset=[
-            "Date",
-            "Close"
-        ]
-    )
-
-    actual_data = actual_data.sort_values(
-        by="Date"
-    )
-
-    actual_data = actual_data.drop_duplicates(
-        subset=["Date"],
-        keep="last"
-    )
-
-    actual_data = actual_data.reset_index(
-        drop=True
-    )
-
-    # --------------------------------------------------------
-    # PREPARE TRAINING VALUES
-    # --------------------------------------------------------
-
-    train_values = prepare_close_series(
-        train_data
-    )
-
-    # --------------------------------------------------------
-    # FIT MODEL
-    # --------------------------------------------------------
-
-    fitted_model = fit_arima_model(
-        train_values
+    model = fit_arima_model(
+        train_values,
+        best_order
     )
 
     # --------------------------------------------------------
     # FORECAST
     # --------------------------------------------------------
 
-    forecast_result = fitted_model.get_forecast(
+    forecast_result = model.get_forecast(
         steps=test_days
     )
-
-    # --------------------------------------------------------
-    # PREDICTIONS
-    # --------------------------------------------------------
 
     predictions = np.asarray(
         forecast_result.predicted_mean,
@@ -590,67 +863,81 @@ def arima_backtest(
     )
 
     # --------------------------------------------------------
-    # LENGTH CHECK
+    # METRICS
     # --------------------------------------------------------
 
-    usable_length = min(
-        len(actual_data),
-        len(predictions),
-        len(lower_bound),
-        len(upper_bound)
+    metrics = calculate_metrics(
+        actual_values,
+        predictions
     )
 
-    if usable_length < 1:
-
-        raise ValueError(
-            "No usable observations were available for backtesting."
-        )
-
     # --------------------------------------------------------
-    # TRIM DATA
+    # DATES
     # --------------------------------------------------------
 
-    actual_data = actual_data.iloc[
-        :usable_length
-    ].copy()
+    clean_history = history.copy()
 
-    predictions = predictions[
-        :usable_length
+    clean_history["Date"] = pd.to_datetime(
+        clean_history["Date"],
+        errors="coerce"
+    )
+
+    clean_history["Close"] = pd.to_numeric(
+        clean_history["Close"],
+        errors="coerce"
+    )
+
+    clean_history = clean_history.dropna(
+        subset=[
+            "Date",
+            "Close"
+        ]
+    )
+
+    clean_history = clean_history[
+        clean_history["Close"] > 0
     ]
 
-    lower_bound = lower_bound[
-        :usable_length
-    ]
+    clean_history = clean_history.sort_values(
+        by="Date"
+    )
 
-    upper_bound = upper_bound[
-        :usable_length
-    ]
+    clean_history = clean_history.drop_duplicates(
+        subset=["Date"],
+        keep="last"
+    )
+
+    actual_dates = clean_history[
+        "Date"
+    ].iloc[
+        -test_days:
+    ].to_numpy()
 
     # --------------------------------------------------------
-    # RESULT DATAFRAME
+    # RESULT
     # --------------------------------------------------------
 
     result = pd.DataFrame({
 
         "Date":
-            actual_data["Date"].to_numpy(),
+            actual_dates,
 
         "Actual_Close":
-            actual_data["Close"].to_numpy(),
+            actual_values,
 
         "Predicted_Close":
             predictions,
 
-        "ARIMA_Lower_95":
+        "Lower_95":
             lower_bound,
 
-        "ARIMA_Upper_95":
+        "Upper_95":
             upper_bound
 
     })
 
     # --------------------------------------------------------
-    # ERROR
+    # ERRORS
     # --------------------------------------------------------
 
     result["Error"] = (
@@ -661,10 +948,6 @@ def arima_backtest(
     result["Absolute_Error"] = (
         result["Error"].abs()
     )
-
-    # --------------------------------------------------------
-    # PERCENTAGE ERROR
-    # --------------------------------------------------------
 
     result["Percentage_Error"] = np.where(
 
@@ -677,60 +960,8 @@ def arima_backtest(
         ),
 
         np.nan
+
     )
-
-    # --------------------------------------------------------
-    # MAE
-    # --------------------------------------------------------
-
-    mae = result[
-        "Absolute_Error"
-    ].mean()
-
-    # --------------------------------------------------------
-    # RMSE
-    # --------------------------------------------------------
-
-    rmse = np.sqrt(
-        np.mean(
-            result["Error"] ** 2
-        )
-    )
-
-    # --------------------------------------------------------
-    # MAPE
-    # --------------------------------------------------------
-
-    valid_mape = (
-        result["Percentage_Error"]
-        .replace(
-            [np.inf, -np.inf],
-            np.nan
-        )
-        .dropna()
-    )
-
-    if len(valid_mape) > 0:
-
-        mape = valid_mape.mean()
-
-    else:
-
-        mape = np.nan
-
-    # --------------------------------------------------------
-    # METRICS
-    # --------------------------------------------------------
-
-    metrics = {
-
-        "MAE": float(mae),
-
-        "RMSE": float(rmse),
-
-        "MAPE": float(mape)
-
-    }
 
     return (
         result,
@@ -752,8 +983,11 @@ st.sidebar.header(
 # ============================================================
 
 uploaded_file = st.sidebar.file_uploader(
+
     "Upload Excel file",
+
     type=["xlsx"]
+
 )
 
 
@@ -770,6 +1004,21 @@ horizon = st.sidebar.slider(
     max_value=60,
 
     value=30
+
+)
+
+
+# ============================================================
+# MODEL VALIDATION DAYS
+# ============================================================
+
+validation_days = st.sidebar.selectbox(
+
+    "Model Validation Period",
+
+    [20, 30, 60],
+
+    index=1
 
 )
 
@@ -793,9 +1042,9 @@ backtest_days = st.sidebar.selectbox(
 # BUTTONS
 # ============================================================
 
-run_forecast = st.sidebar.button(
+run_model_selection = st.sidebar.button(
 
-    "🚀 Run Forecast",
+    "🤖 Find Best ARIMA Model",
 
     use_container_width=True
 
@@ -809,14 +1058,27 @@ run_backtest = st.sidebar.button(
 
 )
 
+run_forecast = st.sidebar.button(
+
+    "🚀 Run Forecast",
+
+    use_container_width=True
+
+)
+
 
 # ============================================================
 # FILE CHECK
 # ============================================================
 
 if (
+
     uploaded_file is None
-    and not os.path.exists(DATA_FILE)
+
+    and not os.path.exists(
+        DATA_FILE
+    )
+
 ):
 
     st.error(
@@ -860,10 +1122,6 @@ st.subheader(
 col1, col2, col3, col4 = st.columns(4)
 
 
-# ------------------------------------------------------------
-# ROWS
-# ------------------------------------------------------------
-
 with col1:
 
     st.metric(
@@ -871,10 +1129,6 @@ with col1:
         len(history)
     )
 
-
-# ------------------------------------------------------------
-# START DATE
-# ------------------------------------------------------------
 
 with col2:
 
@@ -889,10 +1143,6 @@ with col2:
     )
 
 
-# ------------------------------------------------------------
-# END DATE
-# ------------------------------------------------------------
-
 with col3:
 
     st.metric(
@@ -906,19 +1156,35 @@ with col3:
     )
 
 
-# ------------------------------------------------------------
-# LATEST CLOSE
-# ------------------------------------------------------------
-
 with col4:
 
-    latest_close = float(
+    latest_price = float(
         history["Close"].iloc[-1]
     )
 
     st.metric(
+
         "Latest Close",
-        f"₹{latest_close:,.2f}"
+
+        f"₹{latest_price:,.2f}"
+
+    )
+
+
+# ============================================================
+# HISTORICAL DATA PREVIEW
+# ============================================================
+
+with st.expander(
+    "📋 View Historical Data"
+):
+
+    st.dataframe(
+
+        history,
+
+        use_container_width=True
+
     )
 
 
@@ -987,34 +1253,63 @@ plt.close(
 
 
 # ============================================================
-# BACKTEST
+# MODEL SELECTION
 # ============================================================
 
-if run_backtest:
+if run_model_selection:
 
     st.subheader(
-        f"🔍 Last {backtest_days}-Trading-Day ARIMA Backtest"
+        "🤖 Automatic ARIMA Model Selection"
     )
 
     with st.spinner(
-        f"Testing ARIMA on the last {backtest_days} trading days..."
+        "Testing multiple ARIMA models..."
     ):
 
         try:
 
+            values = prepare_close_values(
+                history
+            )
+
             (
-                backtest_result,
-                metrics
-            ) = arima_backtest(
+                best_order,
+                comparison
+            ) = select_best_arima(
 
-                history,
+                values,
 
-                backtest_days
+                validation_days
 
             )
 
             # ------------------------------------------------
-            # METRICS
+            # SAVE IN SESSION
+            # ------------------------------------------------
+
+            st.session_state[
+                "best_order"
+            ] = best_order
+
+            st.session_state[
+                "model_comparison"
+            ] = comparison
+
+            # ------------------------------------------------
+            # BEST MODEL
+            # ------------------------------------------------
+
+            best_row = comparison.iloc[0]
+
+            st.success(
+
+                f"✅ Best ARIMA model: "
+                f"ARIMA{best_order}"
+
+            )
+
+            # ------------------------------------------------
+            # BEST MODEL METRICS
             # ------------------------------------------------
 
             c1, c2, c3 = st.columns(3)
@@ -1023,9 +1318,9 @@ if run_backtest:
 
                 st.metric(
 
-                    "MAE",
+                    "Validation MAE",
 
-                    f"₹{metrics['MAE']:,.2f}"
+                    f"₹{best_row['MAE']:,.2f}"
 
                 )
 
@@ -1033,192 +1328,49 @@ if run_backtest:
 
                 st.metric(
 
-                    "RMSE",
+                    "Validation RMSE",
 
-                    f"₹{metrics['RMSE']:,.2f}"
+                    f"₹{best_row['RMSE']:,.2f}"
 
                 )
 
             with c3:
 
-                if np.isfinite(
-                    metrics["MAPE"]
-                ):
+                st.metric(
 
-                    st.metric(
+                    "Validation MAPE",
 
-                        "MAPE",
+                    f"{best_row['MAPE']:.2f}%"
 
-                        f"{metrics['MAPE']:.2f}%"
-
-                    )
-
-                else:
-
-                    st.metric(
-                        "MAPE",
-                        "N/A"
-                    )
+                )
 
             # ------------------------------------------------
-            # INTERPRETATION
-            # ------------------------------------------------
-
-            if np.isfinite(
-                metrics["MAPE"]
-            ):
-
-                if metrics["MAPE"] > 20:
-
-                    st.error(
-
-                        "⚠️ ARIMA has high forecasting "
-                        "error on this historical period. "
-                        "Future forecasts should be treated "
-                        "as low-confidence."
-
-                    )
-
-                elif metrics["MAPE"] > 10:
-
-                    st.warning(
-
-                        "⚠️ ARIMA has moderate forecasting "
-                        "error on this historical period."
-
-                    )
-
-                else:
-
-                    st.success(
-
-                        "✅ ARIMA shows relatively low "
-                        "historical forecasting error."
-
-                    )
-
-            # ------------------------------------------------
-            # BACKTEST CHART
+            # COMPARISON TABLE
             # ------------------------------------------------
 
             st.subheader(
-                "📉 Actual vs ARIMA Predicted Price"
+                "📊 ARIMA Model Comparison"
             )
 
-            fig2, ax2 = plt.subplots(
-                figsize=(14, 6)
-            )
+            display_comparison = comparison.copy()
 
-            ax2.plot(
-
-                backtest_result["Date"],
-
-                backtest_result["Actual_Close"],
-
-                label="Actual Price",
-
-                linewidth=2
-
-            )
-
-            ax2.plot(
-
-                backtest_result["Date"],
-
-                backtest_result["Predicted_Close"],
-
-                label="ARIMA Predicted Price",
-
-                linestyle="--",
-
-                linewidth=2
-
-            )
-
-            ax2.fill_between(
-
-                backtest_result["Date"],
-
-                backtest_result[
-                    "ARIMA_Lower_95"
-                ].to_numpy(),
-
-                backtest_result[
-                    "ARIMA_Upper_95"
-                ].to_numpy(),
-
-                alpha=0.15,
-
-                label="95% Confidence Interval"
-
-            )
-
-            ax2.set_title(
-
-                f"ARIMA Backtest - Last "
-                f"{backtest_days} Trading Days"
-
-            )
-
-            ax2.set_xlabel(
-                "Date"
-            )
-
-            ax2.set_ylabel(
-                "Price (₹)"
-            )
-
-            ax2.legend()
-
-            ax2.grid(
-                alpha=0.3
-            )
-
-            plt.xticks(
-                rotation=45
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig2
-            )
-
-            plt.close(
-                fig2
-            )
-
-            # ------------------------------------------------
-            # TABLE
-            # ------------------------------------------------
-
-            st.subheader(
-                "📋 Backtest Results"
-            )
+            display_comparison[
+                "ARIMA_Order"
+            ] = display_comparison[
+                "ARIMA_Order"
+            ].astype(str)
 
             st.dataframe(
 
-                backtest_result.style.format({
+                display_comparison.style.format({
 
-                    "Actual_Close":
+                    "MAE":
                         "₹{:.2f}",
 
-                    "Predicted_Close":
+                    "RMSE":
                         "₹{:.2f}",
 
-                    "ARIMA_Lower_95":
-                        "₹{:.2f}",
-
-                    "ARIMA_Upper_95":
-                        "₹{:.2f}",
-
-                    "Error":
-                        "₹{:.2f}",
-
-                    "Absolute_Error":
-                        "₹{:.2f}",
-
-                    "Percentage_Error":
+                    "MAPE":
                         "{:.2f}%"
 
                 }),
@@ -1228,38 +1380,349 @@ if run_backtest:
             )
 
             # ------------------------------------------------
-            # DOWNLOAD BACKTEST
+            # INTERPRETATION
             # ------------------------------------------------
 
-            backtest_csv = (
-                backtest_result
-                .to_csv(
-                    index=False
+            best_mape = float(
+                best_row["MAPE"]
+            )
+
+            if best_mape <= 10:
+
+                st.success(
+
+                    "✅ The selected ARIMA model "
+                    "has relatively low validation error."
+
                 )
-            )
 
-            st.download_button(
+            elif best_mape <= 20:
 
-                "⬇️ Download Backtest CSV",
+                st.warning(
 
-                backtest_csv,
+                    "⚠️ The selected ARIMA model "
+                    "has moderate validation error. "
+                    "Stock forecasts remain uncertain."
 
-                file_name=(
+                )
 
-                    f"reliance_arima_backtest_"
-                    f"{backtest_days}_days.csv"
+            else:
 
-                ),
+                st.error(
 
-                mime="text/csv"
+                    "⚠️ The selected ARIMA model "
+                    "has high validation error. "
+                    "Use the forecast with caution."
 
-            )
+                )
 
         except Exception as e:
 
             st.error(
-                f"Backtest error: {e}"
+                f"Model selection error: {e}"
             )
+
+
+# ============================================================
+# CHECK BEST MODEL
+# ============================================================
+
+if (
+    "best_order"
+    not in st.session_state
+):
+
+    st.info(
+
+        "ℹ️ Please click "
+        "'🤖 Find Best ARIMA Model' "
+        "before running the backtest or forecast."
+
+    )
+
+
+# ============================================================
+# BACKTEST
+# ============================================================
+
+if run_backtest:
+
+    if (
+        "best_order"
+        not in st.session_state
+    ):
+
+        st.warning(
+
+            "Please run automatic ARIMA model "
+            "selection first."
+
+        )
+
+    else:
+
+        best_order = st.session_state[
+            "best_order"
+        ]
+
+        st.subheader(
+
+            f"🔍 {backtest_days}-Trading-Day "
+            f"Backtest Using ARIMA{best_order}"
+
+        )
+
+        with st.spinner(
+            "Running historical backtest..."
+        ):
+
+            try:
+
+                (
+                    backtest_result,
+                    metrics
+                ) = final_backtest(
+
+                    history,
+
+                    backtest_days,
+
+                    best_order
+
+                )
+
+                # ------------------------------------------------
+                # METRICS
+                # ------------------------------------------------
+
+                c1, c2, c3 = st.columns(3)
+
+                with c1:
+
+                    st.metric(
+
+                        "MAE",
+
+                        f"₹{metrics['MAE']:,.2f}"
+
+                    )
+
+                with c2:
+
+                    st.metric(
+
+                        "RMSE",
+
+                        f"₹{metrics['RMSE']:,.2f}"
+
+                    )
+
+                with c3:
+
+                    st.metric(
+
+                        "MAPE",
+
+                        f"{metrics['MAPE']:.2f}%"
+
+                    )
+
+                # ------------------------------------------------
+                # INTERPRETATION
+                # ------------------------------------------------
+
+                if metrics["MAPE"] <= 10:
+
+                    st.success(
+
+                        "✅ The selected ARIMA model "
+                        "shows relatively low historical error."
+
+                    )
+
+                elif metrics["MAPE"] <= 20:
+
+                    st.warning(
+
+                        "⚠️ The selected ARIMA model "
+                        "has moderate historical error."
+
+                    )
+
+                else:
+
+                    st.error(
+
+                        "⚠️ The selected ARIMA model "
+                        "has high historical error."
+
+                    )
+
+                # ------------------------------------------------
+                # BACKTEST CHART
+                # ------------------------------------------------
+
+                st.subheader(
+                    "📉 Actual vs Predicted Price"
+                )
+
+                fig2, ax2 = plt.subplots(
+                    figsize=(14, 6)
+                )
+
+                ax2.plot(
+
+                    backtest_result["Date"],
+
+                    backtest_result["Actual_Close"],
+
+                    label="Actual Price",
+
+                    linewidth=2
+
+                )
+
+                ax2.plot(
+
+                    backtest_result["Date"],
+
+                    backtest_result["Predicted_Close"],
+
+                    label=f"ARIMA{best_order} Predicted",
+
+                    linestyle="--",
+
+                    linewidth=2
+
+                )
+
+                ax2.fill_between(
+
+                    backtest_result["Date"],
+
+                    backtest_result[
+                        "Lower_95"
+                    ].to_numpy(),
+
+                    backtest_result[
+                        "Upper_95"
+                    ].to_numpy(),
+
+                    alpha=0.15,
+
+                    label="95% Confidence Interval"
+
+                )
+
+                ax2.set_title(
+
+                    f"ARIMA{best_order} "
+                    f"Backtest - Last "
+                    f"{backtest_days} Trading Days"
+
+                )
+
+                ax2.set_xlabel(
+                    "Date"
+                )
+
+                ax2.set_ylabel(
+                    "Price (₹)"
+                )
+
+                ax2.legend()
+
+                ax2.grid(
+                    alpha=0.3
+                )
+
+                plt.xticks(
+                    rotation=45
+                )
+
+                plt.tight_layout()
+
+                st.pyplot(
+                    fig2
+                )
+
+                plt.close(
+                    fig2
+                )
+
+                # ------------------------------------------------
+                # TABLE
+                # ------------------------------------------------
+
+                st.subheader(
+                    "📋 Backtest Results"
+                )
+
+                st.dataframe(
+
+                    backtest_result.style.format({
+
+                        "Actual_Close":
+                            "₹{:.2f}",
+
+                        "Predicted_Close":
+                            "₹{:.2f}",
+
+                        "Lower_95":
+                            "₹{:.2f}",
+
+                        "Upper_95":
+                            "₹{:.2f}",
+
+                        "Error":
+                            "₹{:.2f}",
+
+                        "Absolute_Error":
+                            "₹{:.2f}",
+
+                        "Percentage_Error":
+                            "{:.2f}%"
+
+                    }),
+
+                    use_container_width=True
+
+                )
+
+                # ------------------------------------------------
+                # DOWNLOAD
+                # ------------------------------------------------
+
+                csv_data = (
+                    backtest_result
+                    .to_csv(
+                        index=False
+                    )
+                )
+
+                st.download_button(
+
+                    "⬇️ Download Backtest CSV",
+
+                    csv_data,
+
+                    file_name=(
+
+                        f"reliance_arima"
+                        f"{best_order}_backtest_"
+                        f"{backtest_days}_days.csv"
+
+                    ),
+
+                    mime="text/csv"
+
+                )
+
+            except Exception as e:
+
+                st.error(
+                    f"Backtest error: {e}"
+                )
 
 
 # ============================================================
@@ -1268,428 +1731,461 @@ if run_backtest:
 
 if run_forecast:
 
-    st.subheader(
-        f"🔮 Next {horizon} Business-Day ARIMA Forecast"
-    )
-
-    with st.spinner(
-        "Generating ARIMA forecast..."
+    if (
+        "best_order"
+        not in st.session_state
     ):
 
-        try:
+        st.warning(
 
-            # ------------------------------------------------
-            # GENERATE FORECAST
-            # ------------------------------------------------
+            "Please run automatic ARIMA model "
+            "selection first."
 
-            forecast_result = arima_forecast(
+        )
 
-                history,
+    else:
 
-                horizon
+        best_order = st.session_state[
+            "best_order"
+        ]
 
-            )
+        st.subheader(
 
-            # ------------------------------------------------
-            # CURRENT PRICE
-            # ------------------------------------------------
+            f"🔮 Next {horizon} Business-Day "
+            f"ARIMA{best_order} Forecast"
 
-            latest_price = float(
+        )
 
-                history[
-                    "Close"
-                ].iloc[-1]
+        with st.spinner(
+            "Generating future forecast..."
+        ):
 
-            )
+            try:
 
-            # ------------------------------------------------
-            # NEXT DAY PRICE
-            # ------------------------------------------------
+                forecast_result = generate_future_forecast(
 
-            next_day_price = float(
+                    history,
 
-                forecast_result[
-                    "Predicted_Close_ARIMA"
-                ].iloc[0]
+                    horizon,
 
-            )
+                    best_order
 
-            # ------------------------------------------------
-            # FINAL FORECAST PRICE
-            # ------------------------------------------------
+                )
 
-            final_price = float(
+                # ------------------------------------------------
+                # CURRENT PRICE
+                # ------------------------------------------------
 
-                forecast_result[
-                    "Predicted_Close_ARIMA"
-                ].iloc[-1]
+                latest_price = float(
 
-            )
+                    history[
+                        "Close"
+                    ].iloc[-1]
 
-            # ------------------------------------------------
-            # EXPECTED CHANGE
-            # ------------------------------------------------
+                )
 
-            if latest_price != 0:
+                # ------------------------------------------------
+                # NEXT DAY
+                # ------------------------------------------------
 
-                expected_change = (
+                next_day_price = float(
 
-                    (
-                        final_price
-                        - latest_price
+                    forecast_result[
+                        "Predicted_Close"
+                    ].iloc[0]
+
+                )
+
+                # ------------------------------------------------
+                # FINAL DAY
+                # ------------------------------------------------
+
+                final_price = float(
+
+                    forecast_result[
+                        "Predicted_Close"
+                    ].iloc[-1]
+
+                )
+
+                # ------------------------------------------------
+                # EXPECTED CHANGE
+                # ------------------------------------------------
+
+                if latest_price != 0:
+
+                    expected_change = (
+
+                        (
+                            final_price
+                            - latest_price
+                        )
+                        / latest_price
+                        * 100
+
                     )
-                    / latest_price
-                    * 100
+
+                else:
+
+                    expected_change = np.nan
+
+                # ------------------------------------------------
+                # METRICS
+                # ------------------------------------------------
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                with c1:
+
+                    st.metric(
+
+                        "Current Price",
+
+                        f"₹{latest_price:,.2f}"
+
+                    )
+
+                with c2:
+
+                    st.metric(
+
+                        "Next Trading Day",
+
+                        f"₹{next_day_price:,.2f}"
+
+                    )
+
+                with c3:
+
+                    st.metric(
+
+                        f"Day {horizon}",
+
+                        f"₹{final_price:,.2f}"
+
+                    )
+
+                with c4:
+
+                    if np.isfinite(
+                        expected_change
+                    ):
+
+                        st.metric(
+
+                            "Expected Change",
+
+                            f"{expected_change:+.2f}%"
+
+                        )
+
+                    else:
+
+                        st.metric(
+
+                            "Expected Change",
+
+                            "N/A"
+
+                        )
+
+                # ------------------------------------------------
+                # MODEL INFORMATION
+                # ------------------------------------------------
+
+                st.success(
+
+                    f"🤖 Forecast generated using "
+                    f"automatically selected "
+                    f"ARIMA{best_order} model."
 
                 )
 
-            else:
+                # =================================================
+                # FORECAST CHART
+                # =================================================
 
-                expected_change = np.nan
+                st.subheader(
+                    "📈 Future ARIMA Forecast"
+                )
 
-            # ------------------------------------------------
-            # TOP METRICS
-            # ------------------------------------------------
+                fig3, ax3 = plt.subplots(
+                    figsize=(15, 7)
+                )
 
-            c1, c2, c3, c4 = st.columns(4)
+                chart_history = history.tail(
+                    min(
+                        120,
+                        len(history)
+                    )
+                )
 
-            with c1:
+                # ------------------------------------------------
+                # HISTORY
+                # ------------------------------------------------
 
-                st.metric(
+                ax3.plot(
 
-                    "Current Price",
+                    chart_history["Date"],
 
-                    f"₹{latest_price:,.2f}"
+                    chart_history["Close"],
+
+                    label="Historical Close",
+
+                    linewidth=2
 
                 )
 
-            with c2:
+                # ------------------------------------------------
+                # FORECAST
+                # ------------------------------------------------
 
-                st.metric(
+                ax3.plot(
 
-                    "Next Trading Day",
+                    forecast_result["Date"],
 
-                    f"₹{next_day_price:,.2f}"
+                    forecast_result[
+                        "Predicted_Close"
+                    ],
+
+                    label=f"ARIMA{best_order} Forecast",
+
+                    linewidth=2,
+
+                    linestyle="--"
 
                 )
 
-            with c3:
+                # ------------------------------------------------
+                # CONFIDENCE INTERVAL
+                # ------------------------------------------------
 
-                st.metric(
+                ax3.fill_between(
 
-                    f"Day {horizon}",
+                    forecast_result["Date"],
 
-                    f"₹{final_price:,.2f}"
+                    forecast_result[
+                        "Lower_95"
+                    ].to_numpy(),
+
+                    forecast_result[
+                        "Upper_95"
+                    ].to_numpy(),
+
+                    alpha=0.15,
+
+                    label="95% Confidence Interval"
 
                 )
 
-            with c4:
+                # ------------------------------------------------
+                # FORECAST START
+                # ------------------------------------------------
+
+                ax3.axvline(
+
+                    history["Date"].max(),
+
+                    linestyle="--",
+
+                    linewidth=1.5,
+
+                    label="Forecast Start"
+
+                )
+
+                ax3.set_title(
+
+                    f"Reliance Industries - "
+                    f"{horizon} Business-Day "
+                    f"ARIMA{best_order} Forecast"
+
+                )
+
+                ax3.set_xlabel(
+                    "Date"
+                )
+
+                ax3.set_ylabel(
+                    "Price (₹)"
+                )
+
+                ax3.legend()
+
+                ax3.grid(
+                    alpha=0.3
+                )
+
+                plt.xticks(
+                    rotation=45
+                )
+
+                plt.tight_layout()
+
+                st.pyplot(
+                    fig3
+                )
+
+                plt.close(
+                    fig3
+                )
+
+                # =================================================
+                # FORECAST TABLE
+                # =================================================
+
+                st.subheader(
+                    "📋 Forecast Values"
+                )
+
+                st.dataframe(
+
+                    forecast_result.style.format({
+
+                        "Predicted_Close":
+                            "₹{:.2f}",
+
+                        "Lower_95":
+                            "₹{:.2f}",
+
+                        "Upper_95":
+                            "₹{:.2f}"
+
+                    }),
+
+                    use_container_width=True
+
+                )
+
+                # =================================================
+                # DOWNLOAD
+                # =================================================
+
+                forecast_csv = (
+
+                    forecast_result
+                    .to_csv(
+                        index=False
+                    )
+
+                )
+
+                st.download_button(
+
+                    "⬇️ Download Forecast CSV",
+
+                    forecast_csv,
+
+                    file_name=(
+
+                        f"reliance_arima"
+                        f"{best_order}_forecast_"
+                        f"{horizon}_days.csv"
+
+                    ),
+
+                    mime="text/csv"
+
+                )
+
+                # =================================================
+                # INTERPRETATION
+                # =================================================
+
+                st.subheader(
+                    "🧠 Forecast Interpretation"
+                )
 
                 if np.isfinite(
                     expected_change
                 ):
 
-                    st.metric(
+                    if expected_change > 5:
 
-                        "Expected Change",
+                        st.success(
 
-                        f"{expected_change:+.2f}%"
+                            f"📈 ARIMA{best_order} "
+                            f"forecasts an approximately "
+                            f"{expected_change:.2f}% increase "
+                            f"over the next {horizon} "
+                            f"business days."
 
-                    )
+                        )
 
-                else:
+                    elif expected_change < -5:
 
-                    st.metric(
+                        st.warning(
 
-                        "Expected Change",
+                            f"📉 ARIMA{best_order} "
+                            f"forecasts an approximately "
+                            f"{abs(expected_change):.2f}% decrease "
+                            f"over the next {horizon} "
+                            f"business days."
 
-                        "N/A"
+                        )
 
-                    )
+                    else:
 
-            # =================================================
-            # FORECAST CHART
-            # =================================================
+                        st.info(
 
-            st.subheader(
-                "📈 ARIMA Forecast Chart"
-            )
+                            f"➡️ ARIMA{best_order} "
+                            f"forecasts relatively stable "
+                            f"movement over the next "
+                            f"{horizon} business days."
 
-            fig3, ax3 = plt.subplots(
-                figsize=(15, 7)
-            )
+                        )
 
-            chart_history = history.tail(
-                min(
-                    120,
-                    len(history)
-                )
-            )
+                # =================================================
+                # FINAL CONFIDENCE INTERVAL
+                # =================================================
 
-            # ------------------------------------------------
-            # HISTORICAL PRICE
-            # ------------------------------------------------
+                lower_final = float(
 
-            ax3.plot(
+                    forecast_result[
+                        "Lower_95"
+                    ].iloc[-1]
 
-                chart_history["Date"],
-
-                chart_history["Close"],
-
-                label="Historical Close",
-
-                linewidth=2
-
-            )
-
-            # ------------------------------------------------
-            # FORECAST
-            # ------------------------------------------------
-
-            ax3.plot(
-
-                forecast_result["Date"],
-
-                forecast_result[
-                    "Predicted_Close_ARIMA"
-                ],
-
-                label="ARIMA Forecast",
-
-                linewidth=2,
-
-                linestyle="--"
-
-            )
-
-            # ------------------------------------------------
-            # CONFIDENCE INTERVAL
-            # ------------------------------------------------
-
-            ax3.fill_between(
-
-                forecast_result["Date"],
-
-                forecast_result[
-                    "ARIMA_Lower_95"
-                ].to_numpy(),
-
-                forecast_result[
-                    "ARIMA_Upper_95"
-                ].to_numpy(),
-
-                alpha=0.15,
-
-                label="ARIMA 95% Confidence Interval"
-
-            )
-
-            # ------------------------------------------------
-            # FORECAST START
-            # ------------------------------------------------
-
-            ax3.axvline(
-
-                history["Date"].max(),
-
-                linestyle="--",
-
-                linewidth=1.5,
-
-                label="Forecast Start"
-
-            )
-
-            ax3.set_title(
-
-                f"Reliance Industries - "
-                f"{horizon} Business-Day ARIMA Forecast"
-
-            )
-
-            ax3.set_xlabel(
-                "Date"
-            )
-
-            ax3.set_ylabel(
-                "Price (₹)"
-            )
-
-            ax3.legend()
-
-            ax3.grid(
-                alpha=0.3
-            )
-
-            plt.xticks(
-                rotation=45
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig3
-            )
-
-            plt.close(
-                fig3
-            )
-
-            # =================================================
-            # FORECAST TABLE
-            # =================================================
-
-            st.subheader(
-                "📋 Forecast Values"
-            )
-
-            st.dataframe(
-
-                forecast_result.style.format({
-
-                    "Predicted_Close_ARIMA":
-                        "₹{:.2f}",
-
-                    "ARIMA_Lower_95":
-                        "₹{:.2f}",
-
-                    "ARIMA_Upper_95":
-                        "₹{:.2f}"
-
-                }),
-
-                use_container_width=True
-
-            )
-
-            # =================================================
-            # DOWNLOAD FORECAST
-            # =================================================
-
-            forecast_csv = (
-
-                forecast_result
-                .to_csv(
-                    index=False
                 )
 
-            )
+                upper_final = float(
 
-            st.download_button(
+                    forecast_result[
+                        "Upper_95"
+                    ].iloc[-1]
 
-                "⬇️ Download Forecast CSV",
+                )
 
-                forecast_csv,
+                st.info(
 
-                file_name=(
+                    f"📊 Day {horizon} estimate: "
+                    f"₹{final_price:,.2f}. "
+                    f"Approximate 95% confidence interval: "
+                    f"₹{lower_final:,.2f} to "
+                    f"₹{upper_final:,.2f}."
 
-                    f"reliance_arima_forecast_"
-                    f"{horizon}_days.csv"
+                )
 
-                ),
+                # =================================================
+                # WARNING
+                # =================================================
 
-                mime="text/csv"
+                st.warning(
 
-            )
+                    "⚠️ Stock-market forecasts are uncertain. "
+                    "ARIMA uses historical price patterns and "
+                    "cannot predict unexpected news, market "
+                    "events, corporate announcements, global "
+                    "economic changes, or sudden volatility. "
+                    "This application is for educational and "
+                    "research purposes only."
 
-            # =================================================
-            # INTERPRETATION
-            # =================================================
+                )
 
-            st.subheader(
-                "🧠 Forecast Interpretation"
-            )
+            except Exception as e:
 
-            if np.isfinite(
-                expected_change
-            ):
-
-                if expected_change > 5:
-
-                    st.success(
-
-                        f"📈 The ARIMA model forecasts "
-                        f"an approximately "
-                        f"{expected_change:.2f}% increase "
-                        f"over the next {horizon} "
-                        f"business days."
-
-                    )
-
-                elif expected_change < -5:
-
-                    st.warning(
-
-                        f"📉 The ARIMA model forecasts "
-                        f"an approximately "
-                        f"{abs(expected_change):.2f}% decrease "
-                        f"over the next {horizon} "
-                        f"business days."
-
-                    )
-
-                else:
-
-                    st.info(
-
-                        f"➡️ The ARIMA model forecasts "
-                        f"relatively stable movement "
-                        f"over the next {horizon} "
-                        f"business days."
-
-                    )
-
-            # =================================================
-            # CONFIDENCE INFORMATION
-            # =================================================
-
-            lower_final = float(
-
-                forecast_result[
-                    "ARIMA_Lower_95"
-                ].iloc[-1]
-
-            )
-
-            upper_final = float(
-
-                forecast_result[
-                    "ARIMA_Upper_95"
-                ].iloc[-1]
-
-            )
-
-            st.info(
-
-                f"📊 Day {horizon} ARIMA estimate: "
-                f"₹{final_price:,.2f}. "
-                f"The approximate 95% confidence interval "
-                f"is ₹{lower_final:,.2f} to "
-                f"₹{upper_final:,.2f}."
-
-            )
-
-            # =================================================
-            # WARNING
-            # =================================================
-
-            st.warning(
-
-                "⚠️ Stock-market forecasts are uncertain. "
-                "ARIMA uses historical price patterns and "
-                "cannot predict unexpected news, market "
-                "events, corporate announcements, global "
-                "economic changes, or sudden volatility. "
-                "This application is for educational and "
-                "research purposes only."
-
-            )
-
-        except Exception as e:
-
-            st.error(
-                f"Forecast error: {e}"
-            )
+                st.error(
+                    f"Forecast error: {e}"
+                )
 
 
 # ============================================================
@@ -1701,7 +2197,8 @@ st.markdown("---")
 st.caption(
 
     "Reliance Industries Stock Price Forecasting | "
-    "ARIMA Time Series Analysis | "
+    "Automatic ARIMA Model Selection | "
+    "MAE | RMSE | MAPE | "
     "Educational Project"
 
 )
