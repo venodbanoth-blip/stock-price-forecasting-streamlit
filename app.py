@@ -9,7 +9,7 @@ from statsmodels.tsa.arima.model import ARIMA
 
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
@@ -49,10 +49,6 @@ REQUIRED_COLUMNS = [
 @st.cache_data
 def load_data(uploaded_file=None):
 
-    # --------------------------------------------------------
-    # READ EXCEL
-    # --------------------------------------------------------
-
     if uploaded_file is not None:
 
         df = pd.read_excel(
@@ -72,9 +68,9 @@ def load_data(uploaded_file=None):
     # --------------------------------------------------------
 
     missing_columns = [
-        col
-        for col in REQUIRED_COLUMNS
-        if col not in df.columns
+        column
+        for column in REQUIRED_COLUMNS
+        if column not in df.columns
     ]
 
     if missing_columns:
@@ -114,7 +110,7 @@ def load_data(uploaded_file=None):
         )
 
     # --------------------------------------------------------
-    # REMOVE INVALID ROWS
+    # REMOVE INVALID DATE/CLOSE
     # --------------------------------------------------------
 
     df = df.dropna(
@@ -129,7 +125,7 @@ def load_data(uploaded_file=None):
     # --------------------------------------------------------
 
     df = df.sort_values(
-        "Date"
+        by="Date"
     )
 
     # --------------------------------------------------------
@@ -163,7 +159,7 @@ def load_data(uploaded_file=None):
 
 
 # ============================================================
-# PREPARE CLOSE VALUES FOR ARIMA
+# PREPARE CLOSE VALUES
 # ============================================================
 
 def prepare_close_series(history):
@@ -204,7 +200,7 @@ def prepare_close_series(history):
     # --------------------------------------------------------
 
     df = df.sort_values(
-        "Date"
+        by="Date"
     )
 
     # --------------------------------------------------------
@@ -217,7 +213,15 @@ def prepare_close_series(history):
     )
 
     # --------------------------------------------------------
-    # CHECK DATA
+    # RESET INDEX
+    # --------------------------------------------------------
+
+    df = df.reset_index(
+        drop=True
+    )
+
+    # --------------------------------------------------------
+    # CHECK OBSERVATIONS
     # --------------------------------------------------------
 
     if len(df) < 30:
@@ -227,19 +231,16 @@ def prepare_close_series(history):
         )
 
     # --------------------------------------------------------
-    # IMPORTANT ARIMA FIX
+    # IMPORTANT:
+    # Return NumPy array.
     #
-    # Return NumPy array instead of Pandas Series with
-    # DatetimeIndex.
-    #
-    # This prevents:
+    # This avoids:
     # ValueError: No supported index is available.
     # --------------------------------------------------------
 
-    close_values = (
-        df["Close"]
-        .astype(float)
-        .to_numpy()
+    close_values = np.asarray(
+        df["Close"],
+        dtype=float
     )
 
     return close_values
@@ -252,14 +253,17 @@ def prepare_close_series(history):
 def fit_arima_model(close_values):
 
     # --------------------------------------------------------
-    # DATA CHECK
+    # CONVERT TO NUMPY
     # --------------------------------------------------------
 
-    if close_values is None:
+    close_values = np.asarray(
+        close_values,
+        dtype=float
+    )
 
-        raise ValueError(
-            "Close price data is empty."
-        )
+    # --------------------------------------------------------
+    # CHECK LENGTH
+    # --------------------------------------------------------
 
     if len(close_values) < 30:
 
@@ -268,13 +272,8 @@ def fit_arima_model(close_values):
         )
 
     # --------------------------------------------------------
-    # REMOVE INVALID NUMBERS
+    # CHECK FINITE VALUES
     # --------------------------------------------------------
-
-    close_values = np.asarray(
-        close_values,
-        dtype=float
-    )
 
     if not np.all(
         np.isfinite(close_values)
@@ -282,6 +281,18 @@ def fit_arima_model(close_values):
 
         raise ValueError(
             "Close price data contains invalid values."
+        )
+
+    # --------------------------------------------------------
+    # CHECK POSITIVE PRICE
+    # --------------------------------------------------------
+
+    if np.any(
+        close_values <= 0
+    ):
+
+        raise ValueError(
+            "Close price contains zero or negative values."
         )
 
     # --------------------------------------------------------
@@ -299,6 +310,56 @@ def fit_arima_model(close_values):
 
 
 # ============================================================
+# CONFIDENCE INTERVAL HELPER
+# ============================================================
+
+def get_confidence_interval(
+    forecast_result
+):
+
+    confidence = forecast_result.conf_int(
+        alpha=0.05
+    )
+
+    # --------------------------------------------------------
+    # Convert confidence interval to NumPy.
+    #
+    # Works whether Statsmodels returns:
+    # DataFrame OR NumPy ndarray.
+    # --------------------------------------------------------
+
+    confidence = np.asarray(
+        confidence,
+        dtype=float
+    )
+
+    # --------------------------------------------------------
+    # CHECK SHAPE
+    # --------------------------------------------------------
+
+    if confidence.ndim != 2:
+
+        raise ValueError(
+            "Unexpected confidence interval format."
+        )
+
+    if confidence.shape[1] < 2:
+
+        raise ValueError(
+            "Confidence interval does not contain two columns."
+        )
+
+    lower_bound = confidence[:, 0]
+
+    upper_bound = confidence[:, 1]
+
+    return (
+        lower_bound,
+        upper_bound
+    )
+
+
+# ============================================================
 # FUTURE ARIMA FORECAST
 # ============================================================
 
@@ -311,6 +372,8 @@ def arima_forecast(
     # VALIDATE HORIZON
     # --------------------------------------------------------
 
+    n_days = int(n_days)
+
     if n_days < 1:
 
         raise ValueError(
@@ -318,7 +381,7 @@ def arima_forecast(
         )
 
     # --------------------------------------------------------
-    # PREPARE CLOSE VALUES
+    # PREPARE DATA
     # --------------------------------------------------------
 
     close_values = prepare_close_series(
@@ -342,7 +405,7 @@ def arima_forecast(
     )
 
     # --------------------------------------------------------
-    # PREDICTED VALUES
+    # FORECAST VALUES
     # --------------------------------------------------------
 
     forecast = np.asarray(
@@ -354,19 +417,22 @@ def arima_forecast(
     # CONFIDENCE INTERVAL
     # --------------------------------------------------------
 
-    confidence = forecast_result.conf_int(
-        alpha=0.05
+    (
+        lower_bound,
+        upper_bound
+    ) = get_confidence_interval(
+        forecast_result
     )
 
-    lower_bound = np.asarray(
-        confidence.iloc[:, 0],
-        dtype=float
-    )
+    # --------------------------------------------------------
+    # CHECK FORECAST LENGTH
+    # --------------------------------------------------------
 
-    upper_bound = np.asarray(
-        confidence.iloc[:, 1],
-        dtype=float
-    )
+    if len(forecast) != n_days:
+
+        raise ValueError(
+            "Forecast length does not match requested horizon."
+        )
 
     # --------------------------------------------------------
     # LAST HISTORICAL DATE
@@ -377,11 +443,10 @@ def arima_forecast(
     )
 
     # --------------------------------------------------------
-    # FUTURE BUSINESS DATES
+    # FUTURE BUSINESS DAYS
     #
-    # NOTE:
-    # bdate_range excludes Saturday/Sunday.
-    # It does not account for NSE holidays.
+    # Monday-Friday only.
+    # NSE holidays are not removed.
     # --------------------------------------------------------
 
     future_dates = pd.bdate_range(
@@ -390,7 +455,7 @@ def arima_forecast(
     )
 
     # --------------------------------------------------------
-    # RESULT DATAFRAME
+    # RESULT
     # --------------------------------------------------------
 
     result = pd.DataFrame({
@@ -417,6 +482,8 @@ def arima_backtest(
     test_days
 ):
 
+    test_days = int(test_days)
+
     # --------------------------------------------------------
     # CHECK DATA SIZE
     # --------------------------------------------------------
@@ -437,12 +504,16 @@ def arima_backtest(
     ].copy()
 
     # --------------------------------------------------------
-    # ACTUAL TEST DATA
+    # TEST DATA
     # --------------------------------------------------------
 
     actual_data = history.iloc[
         -test_days:
     ].copy()
+
+    # --------------------------------------------------------
+    # CLEAN TEST DATA
+    # --------------------------------------------------------
 
     actual_data["Date"] = pd.to_datetime(
         actual_data["Date"],
@@ -461,12 +532,21 @@ def arima_backtest(
         ]
     )
 
+    actual_data = actual_data.sort_values(
+        by="Date"
+    )
+
+    actual_data = actual_data.drop_duplicates(
+        subset=["Date"],
+        keep="last"
+    )
+
     actual_data = actual_data.reset_index(
         drop=True
     )
 
     # --------------------------------------------------------
-    # PREPARE TRAINING DATA
+    # PREPARE TRAINING VALUES
     # --------------------------------------------------------
 
     train_values = prepare_close_series(
@@ -474,7 +554,7 @@ def arima_backtest(
     )
 
     # --------------------------------------------------------
-    # FIT ARIMA
+    # FIT MODEL
     # --------------------------------------------------------
 
     fitted_model = fit_arima_model(
@@ -482,12 +562,16 @@ def arima_backtest(
     )
 
     # --------------------------------------------------------
-    # FORECAST TEST PERIOD
+    # FORECAST
     # --------------------------------------------------------
 
     forecast_result = fitted_model.get_forecast(
         steps=test_days
     )
+
+    # --------------------------------------------------------
+    # PREDICTIONS
+    # --------------------------------------------------------
 
     predictions = np.asarray(
         forecast_result.predicted_mean,
@@ -498,28 +582,33 @@ def arima_backtest(
     # CONFIDENCE INTERVAL
     # --------------------------------------------------------
 
-    confidence = forecast_result.conf_int(
-        alpha=0.05
-    )
-
-    lower_bound = np.asarray(
-        confidence.iloc[:, 0],
-        dtype=float
-    )
-
-    upper_bound = np.asarray(
-        confidence.iloc[:, 1],
-        dtype=float
+    (
+        lower_bound,
+        upper_bound
+    ) = get_confidence_interval(
+        forecast_result
     )
 
     # --------------------------------------------------------
-    # PROTECT AGAINST LENGTH MISMATCH
+    # LENGTH CHECK
     # --------------------------------------------------------
 
     usable_length = min(
         len(actual_data),
-        len(predictions)
+        len(predictions),
+        len(lower_bound),
+        len(upper_bound)
     )
+
+    if usable_length < 1:
+
+        raise ValueError(
+            "No usable observations were available for backtesting."
+        )
+
+    # --------------------------------------------------------
+    # TRIM DATA
+    # --------------------------------------------------------
 
     actual_data = actual_data.iloc[
         :usable_length
@@ -538,12 +627,13 @@ def arima_backtest(
     ]
 
     # --------------------------------------------------------
-    # RESULT
+    # RESULT DATAFRAME
     # --------------------------------------------------------
 
     result = pd.DataFrame({
 
-        "Date": actual_data["Date"].to_numpy(),
+        "Date":
+            actual_data["Date"].to_numpy(),
 
         "Actual_Close":
             actual_data["Close"].to_numpy(),
@@ -590,19 +680,26 @@ def arima_backtest(
     )
 
     # --------------------------------------------------------
-    # METRICS
+    # MAE
     # --------------------------------------------------------
 
-    mae = (
-        result["Absolute_Error"]
-        .mean()
-    )
+    mae = result[
+        "Absolute_Error"
+    ].mean()
+
+    # --------------------------------------------------------
+    # RMSE
+    # --------------------------------------------------------
 
     rmse = np.sqrt(
         np.mean(
             result["Error"] ** 2
         )
     )
+
+    # --------------------------------------------------------
+    # MAPE
+    # --------------------------------------------------------
 
     valid_mape = (
         result["Percentage_Error"]
@@ -621,6 +718,10 @@ def arima_backtest(
 
         mape = np.nan
 
+    # --------------------------------------------------------
+    # METRICS
+    # --------------------------------------------------------
+
     metrics = {
 
         "MAE": float(mae),
@@ -631,7 +732,10 @@ def arima_backtest(
 
     }
 
-    return result, metrics
+    return (
+        result,
+        metrics
+    )
 
 
 # ============================================================
@@ -666,6 +770,7 @@ horizon = st.sidebar.slider(
     max_value=60,
 
     value=30
+
 )
 
 
@@ -680,6 +785,7 @@ backtest_days = st.sidebar.selectbox(
     [30, 60],
 
     index=0
+
 )
 
 
@@ -692,6 +798,7 @@ run_forecast = st.sidebar.button(
     "🚀 Run Forecast",
 
     use_container_width=True
+
 )
 
 run_backtest = st.sidebar.button(
@@ -699,6 +806,7 @@ run_backtest = st.sidebar.button(
     "🔍 Run Backtest",
 
     use_container_width=True
+
 )
 
 
@@ -827,7 +935,10 @@ fig, ax = plt.subplots(
 )
 
 recent_history = history.tail(
-    min(250, len(history))
+    min(
+        250,
+        len(history)
+    )
 )
 
 ax.plot(
@@ -891,7 +1002,10 @@ if run_backtest:
 
         try:
 
-            backtest_result, metrics = arima_backtest(
+            (
+                backtest_result,
+                metrics
+            ) = arima_backtest(
 
                 history,
 
@@ -905,7 +1019,6 @@ if run_backtest:
 
             c1, c2, c3 = st.columns(3)
 
-
             with c1:
 
                 st.metric(
@@ -916,7 +1029,6 @@ if run_backtest:
 
                 )
 
-
             with c2:
 
                 st.metric(
@@ -926,7 +1038,6 @@ if run_backtest:
                     f"₹{metrics['RMSE']:,.2f}"
 
                 )
-
 
             with c3:
 
@@ -948,7 +1059,6 @@ if run_backtest:
                         "MAPE",
                         "N/A"
                     )
-
 
             # ------------------------------------------------
             # INTERPRETATION
@@ -986,7 +1096,6 @@ if run_backtest:
                         "historical forecasting error."
 
                     )
-
 
             # ------------------------------------------------
             # BACKTEST CHART
@@ -1030,8 +1139,13 @@ if run_backtest:
 
                 backtest_result["Date"],
 
-                backtest_result["ARIMA_Lower_95"].to_numpy(),
-                backtest_result["ARIMA_Upper_95"].to_numpy(),
+                backtest_result[
+                    "ARIMA_Lower_95"
+                ].to_numpy(),
+
+                backtest_result[
+                    "ARIMA_Upper_95"
+                ].to_numpy(),
 
                 alpha=0.15,
 
@@ -1074,7 +1188,6 @@ if run_backtest:
                 fig2
             )
 
-
             # ------------------------------------------------
             # TABLE
             # ------------------------------------------------
@@ -1114,14 +1227,15 @@ if run_backtest:
 
             )
 
-
             # ------------------------------------------------
             # DOWNLOAD BACKTEST
             # ------------------------------------------------
 
             backtest_csv = (
                 backtest_result
-                .to_csv(index=False)
+                .to_csv(
+                    index=False
+                )
             )
 
             st.download_button(
@@ -1140,7 +1254,6 @@ if run_backtest:
                 mime="text/csv"
 
             )
-
 
         except Exception as e:
 
@@ -1177,17 +1290,17 @@ if run_forecast:
 
             )
 
-
             # ------------------------------------------------
             # CURRENT PRICE
             # ------------------------------------------------
 
             latest_price = float(
 
-                history["Close"].iloc[-1]
+                history[
+                    "Close"
+                ].iloc[-1]
 
             )
-
 
             # ------------------------------------------------
             # NEXT DAY PRICE
@@ -1201,7 +1314,6 @@ if run_forecast:
 
             )
 
-
             # ------------------------------------------------
             # FINAL FORECAST PRICE
             # ------------------------------------------------
@@ -1213,7 +1325,6 @@ if run_forecast:
                 ].iloc[-1]
 
             )
-
 
             # ------------------------------------------------
             # EXPECTED CHANGE
@@ -1227,9 +1338,7 @@ if run_forecast:
                         final_price
                         - latest_price
                     )
-
                     / latest_price
-
                     * 100
 
                 )
@@ -1238,13 +1347,11 @@ if run_forecast:
 
                 expected_change = np.nan
 
-
             # ------------------------------------------------
             # TOP METRICS
             # ------------------------------------------------
 
             c1, c2, c3, c4 = st.columns(4)
-
 
             with c1:
 
@@ -1256,7 +1363,6 @@ if run_forecast:
 
                 )
 
-
             with c2:
 
                 st.metric(
@@ -1267,7 +1373,6 @@ if run_forecast:
 
                 )
 
-
             with c3:
 
                 st.metric(
@@ -1277,7 +1382,6 @@ if run_forecast:
                     f"₹{final_price:,.2f}"
 
                 )
-
 
             with c4:
 
@@ -1296,10 +1400,12 @@ if run_forecast:
                 else:
 
                     st.metric(
-                        "Expected Change",
-                        "N/A"
-                    )
 
+                        "Expected Change",
+
+                        "N/A"
+
+                    )
 
             # =================================================
             # FORECAST CHART
@@ -1314,9 +1420,11 @@ if run_forecast:
             )
 
             chart_history = history.tail(
-                min(120, len(history))
+                min(
+                    120,
+                    len(history)
+                )
             )
-
 
             # ------------------------------------------------
             # HISTORICAL PRICE
@@ -1333,7 +1441,6 @@ if run_forecast:
                 linewidth=2
 
             )
-
 
             # ------------------------------------------------
             # FORECAST
@@ -1354,7 +1461,6 @@ if run_forecast:
                 linestyle="--"
 
             )
-
 
             # ------------------------------------------------
             # CONFIDENCE INTERVAL
@@ -1378,7 +1484,6 @@ if run_forecast:
 
             )
 
-
             # ------------------------------------------------
             # FORECAST START
             # ------------------------------------------------
@@ -1394,7 +1499,6 @@ if run_forecast:
                 label="Forecast Start"
 
             )
-
 
             ax3.set_title(
 
@@ -1431,7 +1535,6 @@ if run_forecast:
                 fig3
             )
 
-
             # =================================================
             # FORECAST TABLE
             # =================================================
@@ -1459,7 +1562,6 @@ if run_forecast:
 
             )
 
-
             # =================================================
             # DOWNLOAD FORECAST
             # =================================================
@@ -1467,7 +1569,9 @@ if run_forecast:
             forecast_csv = (
 
                 forecast_result
-                .to_csv(index=False)
+                .to_csv(
+                    index=False
+                )
 
             )
 
@@ -1487,7 +1591,6 @@ if run_forecast:
                 mime="text/csv"
 
             )
-
 
             # =================================================
             # INTERPRETATION
@@ -1536,7 +1639,6 @@ if run_forecast:
 
                     )
 
-
             # =================================================
             # CONFIDENCE INFORMATION
             # =================================================
@@ -1557,7 +1659,6 @@ if run_forecast:
 
             )
 
-
             st.info(
 
                 f"📊 Day {horizon} ARIMA estimate: "
@@ -1567,7 +1668,6 @@ if run_forecast:
                 f"₹{upper_final:,.2f}."
 
             )
-
 
             # =================================================
             # WARNING
@@ -1584,7 +1684,6 @@ if run_forecast:
                 "research purposes only."
 
             )
-
 
         except Exception as e:
 
