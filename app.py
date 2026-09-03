@@ -39,7 +39,10 @@ st.write(
 MODEL_FILE = "reliance_linear_regression.pkl"
 SCALER_FILE = "reliance_scaler.pkl"
 FEATURE_FILE = "reliance_features.pkl"
-DATA_FILE = "Company stock prices.xlsx"
+
+# IMPORTANT:
+# Make sure this is the exact Excel filename in GitHub
+DATA_FILE = "Company stock prices (1).xlsx"
 
 
 # ============================================================
@@ -50,7 +53,35 @@ def build_technical_features(data):
 
     data = data.copy()
 
-    data["Date"] = pd.to_datetime(data["Date"])
+    data["Date"] = pd.to_datetime(
+        data["Date"],
+        errors="coerce"
+    )
+
+    data["Open"] = pd.to_numeric(
+        data["Open"],
+        errors="coerce"
+    )
+
+    data["High"] = pd.to_numeric(
+        data["High"],
+        errors="coerce"
+    )
+
+    data["Low"] = pd.to_numeric(
+        data["Low"],
+        errors="coerce"
+    )
+
+    data["Close"] = pd.to_numeric(
+        data["Close"],
+        errors="coerce"
+    )
+
+    data["Volume"] = pd.to_numeric(
+        data["Volume"],
+        errors="coerce"
+    )
 
     data = (
         data
@@ -62,10 +93,21 @@ def build_technical_features(data):
     # Lag Features
     # --------------------------------------------------------
 
-    data["Close_Lag1"] = data["Close"].shift(1)
-    data["Close_Lag2"] = data["Close"].shift(2)
-    data["Close_Lag3"] = data["Close"].shift(3)
-    data["Close_Lag5"] = data["Close"].shift(5)
+    data["Close_Lag1"] = (
+        data["Close"].shift(1)
+    )
+
+    data["Close_Lag2"] = (
+        data["Close"].shift(2)
+    )
+
+    data["Close_Lag3"] = (
+        data["Close"].shift(3)
+    )
+
+    data["Close_Lag5"] = (
+        data["Close"].shift(5)
+    )
 
     # --------------------------------------------------------
     # Moving Averages
@@ -164,10 +206,10 @@ def build_technical_features(data):
     rs = avg_gain / avg_loss
 
     data["RSI_14"] = (
-        100 -
-        (
-            100 /
-            (1 + rs)
+        100
+        - (
+            100
+            / (1 + rs)
         )
     )
 
@@ -223,13 +265,19 @@ def build_technical_features(data):
     )
 
     data["BB_Upper"] = (
-        data["BB_Mid"] +
-        (2 * data["BB_Std"])
+        data["BB_Mid"]
+        + (
+            2
+            * data["BB_Std"]
+        )
     )
 
     data["BB_Lower"] = (
-        data["BB_Mid"] -
-        (2 * data["BB_Std"])
+        data["BB_Mid"]
+        - (
+            2
+            * data["BB_Std"]
+        )
     )
 
     # --------------------------------------------------------
@@ -237,13 +285,13 @@ def build_technical_features(data):
     # --------------------------------------------------------
 
     data["High_Low_Range"] = (
-        data["High"] -
-        data["Low"]
+        data["High"]
+        - data["Low"]
     )
 
     data["Open_Close_Range"] = (
-        data["Close"] -
-        data["Open"]
+        data["Close"]
+        - data["Open"]
     )
 
     # --------------------------------------------------------
@@ -286,7 +334,10 @@ def build_technical_features(data):
 
     data["Daily_Range_Pct"] = (
         (
-            (data["High"] - data["Low"])
+            (
+                data["High"]
+                - data["Low"]
+            )
             / data["Close"]
         )
         * 100
@@ -294,7 +345,10 @@ def build_technical_features(data):
 
     data["Open_Close_Return"] = (
         (
-            (data["Close"] - data["Open"])
+            (
+                data["Close"]
+                - data["Open"]
+            )
             / data["Open"]
         )
         * 100
@@ -327,7 +381,11 @@ def load_artifacts():
         FEATURE_FILE
     )
 
-    return model, scaler, features
+    return (
+        model,
+        scaler,
+        features
+    )
 
 
 # ============================================================
@@ -357,6 +415,7 @@ def load_data(file):
 
     df.columns = (
         df.columns
+        .astype(str)
         .str.strip()
     )
 
@@ -380,7 +439,9 @@ def load_data(file):
 
         raise ValueError(
             "Missing columns: "
-            + ", ".join(missing_columns)
+            + ", ".join(
+                missing_columns
+            )
         )
 
     # --------------------------------------------------------
@@ -421,7 +482,7 @@ def load_data(file):
     )
 
     # --------------------------------------------------------
-    # Sort by Date
+    # Sort and remove duplicates
     # --------------------------------------------------------
 
     df = (
@@ -429,8 +490,19 @@ def load_data(file):
             required_columns
         ]
         .sort_values("Date")
+        .drop_duplicates(
+            subset=["Date"],
+            keep="last"
+        )
         .reset_index(drop=True)
     )
+
+    if len(df) < 60:
+
+        raise ValueError(
+            "At least 60 valid stock-price "
+            "records are required."
+        )
 
     return df
 
@@ -458,6 +530,30 @@ def recursive_forecast(
     )
 
     records = []
+
+    # --------------------------------------------------------
+    # Check features
+    # --------------------------------------------------------
+
+    feature_data = build_technical_features(
+        working
+    )
+
+    missing_features = [
+        feature
+        for feature in features
+        if feature not in feature_data.columns
+    ]
+
+    if missing_features:
+
+        raise ValueError(
+            "The following model features "
+            "are missing: "
+            + ", ".join(
+                missing_features
+            )
+        )
 
     # --------------------------------------------------------
     # Forecast one day at a time
@@ -547,9 +643,21 @@ def recursive_forecast(
 
         if latest_features.isnull().any().any():
 
+            missing_feature_names = (
+                latest_features.columns[
+                    latest_features
+                    .isnull()
+                    .any()
+                ]
+                .tolist()
+            )
+
             raise ValueError(
                 "Technical features contain "
-                "missing values."
+                "missing values: "
+                + ", ".join(
+                    missing_feature_names
+                )
             )
 
         # ----------------------------------------------------
@@ -615,7 +723,8 @@ def recursive_forecast(
         records.append(
             {
                 "Date": future_date,
-                "Predicted_Close_LR": prediction
+                "Predicted_Close_LR":
+                    prediction
             }
         )
 
@@ -633,9 +742,75 @@ def arima_forecast(
     n_days
 ):
 
-    series = (
-        history
-        .set_index("Date")["Close"]
+    # --------------------------------------------------------
+    # Clean ARIMA data
+    # --------------------------------------------------------
+
+    arima_data = history.copy()
+
+    arima_data["Date"] = pd.to_datetime(
+        arima_data["Date"],
+        errors="coerce"
+    )
+
+    arima_data["Close"] = pd.to_numeric(
+        arima_data["Close"],
+        errors="coerce"
+    )
+
+    arima_data = arima_data.dropna(
+        subset=[
+            "Date",
+            "Close"
+        ]
+    )
+
+    arima_data = (
+        arima_data
+        .sort_values("Date")
+        .drop_duplicates(
+            subset=["Date"],
+            keep="last"
+        )
+        .reset_index(drop=True)
+    )
+
+    # --------------------------------------------------------
+    # Minimum observations
+    # --------------------------------------------------------
+
+    if len(arima_data) < 30:
+
+        raise ValueError(
+            "ARIMA requires at least "
+            "30 historical observations."
+        )
+
+    # --------------------------------------------------------
+    # Use only Close values
+    # --------------------------------------------------------
+
+    close_values = (
+        arima_data["Close"]
+        .astype(float)
+        .to_numpy()
+    )
+
+    # --------------------------------------------------------
+    # Create integer index
+    #
+    # This prevents:
+    # ValueError: No supported index is available
+    # --------------------------------------------------------
+
+    arima_series = pd.Series(
+        close_values,
+        index=pd.RangeIndex(
+            start=0,
+            stop=len(close_values),
+            step=1
+        ),
+        name="Close"
     )
 
     # --------------------------------------------------------
@@ -643,59 +818,109 @@ def arima_forecast(
     # --------------------------------------------------------
 
     model = ARIMA(
-        series,
+        arima_series,
         order=(5, 1, 0)
     )
 
     fitted_model = model.fit()
 
     # --------------------------------------------------------
-    # Forecast
+    # Direct Forecast
     # --------------------------------------------------------
 
-    forecast = (
+    predicted_values = (
         fitted_model
-        .get_forecast(
+        .forecast(
             steps=n_days
         )
     )
 
-    predicted_values = (
-        forecast
-        .predicted_mean
+    predicted_values = np.asarray(
+        predicted_values,
+        dtype=float
     )
 
-    confidence_interval = (
-        forecast
-        .conf_int(
-            alpha=0.05
+    # --------------------------------------------------------
+    # Confidence Interval
+    # --------------------------------------------------------
+
+    try:
+
+        forecast_result = (
+            fitted_model.get_prediction(
+                start=len(arima_series),
+                end=(
+                    len(arima_series)
+                    + n_days
+                    - 1
+                )
+            )
         )
-    )
+
+        confidence_interval = (
+            forecast_result.conf_int(
+                alpha=0.05
+            )
+        )
+
+        lower_values = (
+            confidence_interval
+            .iloc[:, 0]
+            .to_numpy()
+            .astype(float)
+        )
+
+        upper_values = (
+            confidence_interval
+            .iloc[:, 1]
+            .to_numpy()
+            .astype(float)
+        )
+
+    except Exception:
+
+        lower_values = (
+            predicted_values.copy()
+        )
+
+        upper_values = (
+            predicted_values.copy()
+        )
 
     # --------------------------------------------------------
-    # Future dates
+    # Future business dates
     # --------------------------------------------------------
+
+    last_date = (
+        arima_data["Date"]
+        .max()
+    )
 
     future_dates = pd.bdate_range(
         start=(
-            history["Date"].max()
+            last_date
             + pd.Timedelta(days=1)
         ),
         periods=n_days
     )
 
+    # --------------------------------------------------------
+    # Create result DataFrame
+    # --------------------------------------------------------
+
     result = pd.DataFrame(
         {
-            "Date": future_dates,
+            "Date":
+                future_dates,
 
             "Predicted_Close_ARIMA":
-                predicted_values.values,
+                predicted_values,
 
             "ARIMA_Lower_95":
-                confidence_interval.iloc[:, 0].values,
+                lower_values,
 
             "ARIMA_Upper_95":
-                confidence_interval.iloc[:, 1].values
+                upper_values
         }
     )
 
@@ -742,6 +967,7 @@ missing_files = []
 if not os.path.exists(
     MODEL_FILE
 ):
+
     missing_files.append(
         MODEL_FILE
     )
@@ -749,6 +975,7 @@ if not os.path.exists(
 if not os.path.exists(
     SCALER_FILE
 ):
+
     missing_files.append(
         SCALER_FILE
     )
@@ -756,6 +983,7 @@ if not os.path.exists(
 if not os.path.exists(
     FEATURE_FILE
 ):
+
     missing_files.append(
         FEATURE_FILE
     )
@@ -774,8 +1002,8 @@ if missing_files:
         )
 
     st.info(
-        "Place the required .pkl files in the "
-        "same folder as app.py."
+        "Place the required .pkl files "
+        "in the same folder as app.py."
     )
 
     st.stop()
@@ -817,7 +1045,7 @@ try:
 except FileNotFoundError:
 
     st.warning(
-        "Company stock prices.xlsx was not found."
+        f"{DATA_FILE} was not found."
     )
 
     st.info(
@@ -1061,7 +1289,9 @@ if run_forecast:
             120
         )
 
-        # Historical price
+        # ----------------------------------------------------
+        # Historical
+        # ----------------------------------------------------
 
         ax.plot(
             recent["Date"],
@@ -1069,7 +1299,9 @@ if run_forecast:
             label="Historical Close"
         )
 
+        # ----------------------------------------------------
         # Linear Regression
+        # ----------------------------------------------------
 
         ax.plot(
             forecast_lr["Date"],
@@ -1081,7 +1313,9 @@ if run_forecast:
             markersize=3
         )
 
+        # ----------------------------------------------------
         # ARIMA
+        # ----------------------------------------------------
 
         if forecast_arima is not None:
 
@@ -1104,10 +1338,15 @@ if run_forecast:
                     "ARIMA_Upper_95"
                 ],
                 alpha=0.15,
-                label="ARIMA 95% Confidence Interval"
+                label=(
+                    "ARIMA 95% "
+                    "Confidence Interval"
+                )
             )
 
-        # Forecast start line
+        # ----------------------------------------------------
+        # Forecast Start
+        # ----------------------------------------------------
 
         ax.axvline(
             history["Date"].max(),
